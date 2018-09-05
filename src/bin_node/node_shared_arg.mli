@@ -60,3 +60,4 @@ module Manpage : sig
   val args: Cmdliner.Manpage.block list
   val bugs: Cmdliner.Manpage.block list
 end
+
