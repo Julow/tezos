@@ -1,7 +1,7 @@
 (*****************************************************************************)
 (*                                                                           *)
 (* Open Source License                                                       *)
-(* Copyright (c) 2018 Dynamic Ledger Solutions, Inc. <contact@tezos.com>     *)
+(* Copyright (c) 2019 Nomadic Labs. <contact@tezcore.com>                    *)
 (*                                                                           *)
 (* Permission is hereby granted, free of charge, to any person obtaining a   *)
 (* copy of this software and associated documentation files (the "Software"),*)
@@ -23,12 +23,24 @@
 (*                                                                           *)
 (*****************************************************************************)
 
-val get_chain_id: State.t -> Chain_services.chain -> Chain_id.t Lwt.t
-val get_chain: State.t -> Chain_services.chain -> State.Chain.t Lwt.t
+type t =
+  | Full
+  | Light
+  | Zero
 
-val get_checkpoint: State.t -> Chain_services.chain ->
-  Block_hash.t Lwt.t
+let encoding = Data_encoding.string_enum
+    [ ("full", Full) ;
+      ("light", Light) ;
+      ("zero", Zero) ;
+    ]
 
-val rpc_directory: State.Chain.t RPC_directory.t
+let equal = function
+  | (Full, Full)
+  | (Light, Light)
+  | (Zero, Zero) -> true
+  | _ -> false
 
-val build_rpc_directory: Validator.t -> unit RPC_directory.t
+let pp ppf = function
+  | Full -> Format.fprintf ppf "full"
+  | Light -> Format.fprintf ppf "light"
+  | Zero -> Format.fprintf ppf "zero"

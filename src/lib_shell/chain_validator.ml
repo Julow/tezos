@@ -123,7 +123,7 @@ let may_toggle_bootstrapped_chain w =
     Lwt.wakeup_later nv.bootstrapped_wakener () ;
   end
 
-let may_activate_peer_validator w peer_id =
+let may_activate_peer_validator partial_mode w peer_id =
   let nv = Worker.state w in
   try P2p_peer.Table.find nv.active_peers peer_id
   with Not_found ->
@@ -138,6 +138,7 @@ let may_activate_peer_validator w peer_id =
           P2p_peer.Table.remove nv.active_peers peer_id ;
           P2p_peer.Table.remove nv.bootstrapped_peers peer_id ;
         end
+        partial_mode
         nv.parameters.peer_validator_limits
         nv.parameters.block_validator
         nv.parameters.chain_db
@@ -145,20 +146,32 @@ let may_activate_peer_validator w peer_id =
     P2p_peer.Table.add nv.active_peers peer_id pv ;
     pv
 
-let may_update_checkpoint chain_state new_head =
-  State.Chain.checkpoint chain_state >>= fun old_checkpoint ->
+let may_update_checkpoint chain_state new_head partial_mode =
+  State.Chain.checkpoint chain_state >>= fun checkpoint ->
   let new_level = State.Block.last_allowed_fork_level new_head in
-  if new_level <= old_checkpoint.shell.level then
+  if new_level <= checkpoint.shell.level then
     Lwt.return_unit
   else
     let head_level = State.Block.level new_head in
-    State.Block.Header.read_opt
-      chain_state
-      ~pred:(Int32.to_int (Int32.sub head_level new_level))
-      (State.Block.hash new_head) >>= function
-    | None -> Lwt.return_unit (* should not happen *)
-    | Some new_block ->
-        State.Chain.set_checkpoint chain_state (State.Block.Header.header new_block)
+    State.Block.predecessor_n new_head
+      (Int32.to_int (Int32.sub head_level new_level)) >>= function
+    | None -> assert false (* should not happen *)
+    | Some new_checkpoint ->
+        Log.log_notice "@[Update checkpoint: %a with save point %a@]"
+          Partial_mode.pp partial_mode
+          Block_hash.pp new_checkpoint;
+        State.Block.read_opt chain_state new_checkpoint >>= function
+        | None -> assert false (* should not happen *)
+        | Some new_checkpoint ->
+            let new_checkpoint = State.Block.header new_checkpoint in
+            begin match partial_mode with
+              | Partial_mode.Full ->
+                  State.Chain.set_checkpoint chain_state new_checkpoint
+              | Light ->
+                  State.Chain.set_checkpoint_then_purge_light chain_state new_checkpoint
+              | Zero ->
+                  State.Chain.set_checkpoint_then_purge_zero chain_state new_checkpoint
+            end
 
 let may_switch_test_chain w spawn_child block =
   let nv = Worker.state w in
@@ -185,7 +198,7 @@ let may_switch_test_chain w spawn_child block =
         nv.parameters.block_validator
         nv.parameters.global_valid_block_input
         nv.parameters.db chain_state
-        nv.parameters.limits (* TODO: different limits main/test ? *) >>= fun child ->
+        nv.parameters.limits (* TODO: different limits main/test ? *) >>=? fun child ->
       nv.child <- Some child ;
       return_unit
     end else begin
@@ -270,7 +283,7 @@ let safe_get_prevalidator_filter hash =
           let module Filter = Prevalidator_filters.No_filter (Proto) in
           return (module Filter : Prevalidator_filters.FILTER)
 
-let on_request (type a) w spawn_child (req : a Request.t) : a tzresult Lwt.t =
+let on_request (type a) w spawn_child partial_mode (req : a Request.t) : a tzresult Lwt.t =
   let Request.Validated block = req in
   let nv = Worker.state w in
   Chain.head nv.parameters.chain_state >>= fun head ->
@@ -295,8 +308,8 @@ let on_request (type a) w spawn_child (req : a Request.t) : a tzresult Lwt.t =
   if not accepted_head then
     return Event.Ignored_head
   else begin
-    Chain.set_head nv.parameters.chain_state block >>= fun previous ->
-    may_update_checkpoint nv.parameters.chain_state block >>= fun () ->
+    Chain.set_head nv.parameters.chain_state block >>=? fun previous ->
+    may_update_checkpoint nv.parameters.chain_state block partial_mode >>= fun () ->
     broadcast_head w ~previous block >>= fun () ->
     begin match nv.prevalidator with
       | Some old_prevalidator ->
@@ -352,8 +365,7 @@ let on_close w =
        nv.active_peers []) >>= fun () ->
   Lwt.return_unit
 
-let on_launch start_prevalidator w _ parameters =
-  Chain.init_head parameters.chain_state >>= fun () ->
+let on_launch partial_mode start_prevalidator w _ parameters =
   (if start_prevalidator then
      State.read_chain_data parameters.chain_state
        (fun _ {State.current_head} -> Lwt.return current_head) >>= fun head ->
@@ -390,14 +402,14 @@ let on_launch start_prevalidator w _ parameters =
   Distributed_db.set_callback parameters.chain_db {
     notify_branch = begin fun peer_id locator ->
       Lwt.async begin fun () ->
-        may_activate_peer_validator w peer_id >>= fun pv ->
+        may_activate_peer_validator partial_mode w peer_id >>= fun pv ->
         Peer_validator.notify_branch pv locator ;
-        Lwt.return_unit
+        return_unit
       end
     end ;
     notify_head = begin fun peer_id block ops ->
       Lwt.async begin fun () ->
-        may_activate_peer_validator w peer_id >>= fun pv ->
+        may_activate_peer_validator partial_mode w peer_id >>= fun pv ->
         Peer_validator.notify_head pv block ;
         (* TODO notify prevalidator only if head is known ??? *)
         match nv.prevalidator with
@@ -407,9 +419,9 @@ let on_launch start_prevalidator w _ parameters =
     end ;
     disconnection = begin fun peer_id ->
       Lwt.async begin fun () ->
-        may_activate_peer_validator w peer_id >>= fun pv ->
+        may_activate_peer_validator partial_mode w peer_id >>= fun pv ->
         Peer_validator.shutdown pv >>= fun () ->
-        Lwt.return_unit
+        return_unit
       end
     end ;
   } ;
@@ -418,14 +430,14 @@ let on_launch start_prevalidator w _ parameters =
 let rec create
     ?max_child_ttl ~start_prevalidator ?parent
     peer_validator_limits prevalidator_limits block_validator
-    global_valid_block_input db chain_state limits =
+    global_valid_block_input db chain_state limits partial_mode =
   let spawn_child ~parent pvl pl bl gvbi db n l =
-    create ~start_prevalidator ~parent pvl pl bl gvbi db n l >>= fun w ->
-    Lwt.return (Worker.state w, (fun () -> Worker.shutdown w)) in
+    create ~start_prevalidator ~parent pvl pl bl gvbi db n l partial_mode  >>=? fun w ->
+    return (Worker.state w, (fun () -> Worker.shutdown w)) in
   let module Handlers = struct
     type self = t
-    let on_launch = on_launch start_prevalidator
-    let on_request w = on_request w spawn_child
+    let on_launch = on_launch partial_mode start_prevalidator
+    let on_request w = on_request w spawn_child partial_mode
     let on_close = on_close
     let on_error _ _ _ errs = Lwt.return (Error errs)
     let on_completion = on_completion
@@ -442,11 +454,13 @@ let rec create
       chain_db = Distributed_db.activate db chain_state ;
       chain_state ;
       limits } in
+  Chain.init_head chain_state >>=? fun () ->
   Worker.launch table
     prevalidator_limits.worker_limits
     (State.Chain.id chain_state)
     parameters
-    (module Handlers)
+    (module Handlers) >>= fun worker ->
+  return worker
 
 (** Current block computation *)
 
@@ -454,13 +468,13 @@ let create
     ?max_child_ttl
     ~start_prevalidator
     peer_validator_limits prevalidator_limits
-    block_validator global_valid_block_input global_db state limits =
+    block_validator global_valid_block_input global_db state limits partial_mode =
   (* hide the optional ?parent *)
   create
     ?max_child_ttl
     ~start_prevalidator
     peer_validator_limits prevalidator_limits
-    block_validator global_valid_block_input global_db state limits
+    block_validator global_valid_block_input global_db state limits partial_mode
 
 let chain_id w =
   let { parameters = { chain_state } } = Worker.state w in

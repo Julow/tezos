@@ -85,7 +85,7 @@ module type T = sig
                    any_request ->
                    any_request option ->
                    any_request option) }
-      -> dropbox buffer_kind
+        -> dropbox buffer_kind
   and any_request = Any_request : _ Request.t -> any_request
 
   (** Create a table of workers. *)
@@ -252,7 +252,7 @@ module Make
                    any_request ->
                    any_request option ->
                    any_request option) }
-      -> dropbox buffer_kind
+        -> dropbox buffer_kind
   and any_request = Any_request : _ Request.t -> any_request
 
   and _ buffer =

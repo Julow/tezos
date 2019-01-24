@@ -1137,4 +1137,3 @@ module Advertise = struct
           ) (P2p_peer.Table.fold (fun k v acc -> (k,v)::acc) chain_db.active_connections [])
 
 end
-

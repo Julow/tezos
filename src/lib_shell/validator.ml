@@ -57,7 +57,7 @@ let create state db
       valid_block_input ;
       active_chains = Chain_id.Table.create 7 }
 
-let activate v ?max_child_ttl ~start_prevalidator chain_state =
+let activate v ?max_child_ttl ~start_prevalidator chain_state partial_mode =
   let chain_id = State.Chain.id chain_state in
   lwt_log_notice Tag.DSL.(fun f ->
       f "activate chain %a"
@@ -65,22 +65,30 @@ let activate v ?max_child_ttl ~start_prevalidator chain_state =
       -% a State_logging.chain_id chain_id) >>= fun () ->
   try Chain_id.Table.find v.active_chains chain_id
   with Not_found ->
-    let nv =
-      Chain_validator.create
-        ?max_child_ttl
-        ~start_prevalidator
-        v.peer_validator_limits v.prevalidator_limits
-        v.block_validator
-        v.valid_block_input v.db chain_state
-        v.chain_validator_limits in
-    Chain_id.Table.add v.active_chains chain_id nv ;
-    nv
+    Chain_validator.create
+      ?max_child_ttl
+      ~start_prevalidator
+      v.peer_validator_limits v.prevalidator_limits
+      v.block_validator
+      v.valid_block_input v.db chain_state
+      v.chain_validator_limits
+      partial_mode
+    >>= function
+    | Error [State.Missing_block b]->
+        Format.printf "Missing block in Validator.activate: %a\n%!."
+          Block_hash.pp b;
+        Lwt.fail Not_found
+    | Error _e ->
+        Lwt.fail Not_found
+    | Ok nv ->
+        Chain_id.Table.add v.active_chains chain_id (Lwt.return nv);
+        Lwt.return nv
 
 let get_exn { active_chains } chain_id =
   Chain_id.Table.find active_chains chain_id
 
-let get v chain_id =
-  try get_exn v chain_id >>= fun nv -> return nv
+let get { active_chains } chain_id =
+  try Chain_id.Table.find active_chains chain_id >>= fun nv -> return nv
   with Not_found -> fail (Validation_errors.Inactive_chain chain_id)
 
 let validate_block v ?(force = false) ?chain_id bytes operations =
