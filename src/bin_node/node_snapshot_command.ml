@@ -43,9 +43,13 @@ let export data_dir filename commits =
   Store.init store_root >>=? fun store ->
   let chain_store = Store.Chain.get store chain_id in
   let block_store = Store.Block.get chain_store in
-
-  Error_monad.filter_map_p begin fun commit ->
-    let commit_block_hash = Block_hash.of_b58check_exn commit in
+  begin if commits <> [] then
+      Lwt.return (List.map Block_hash.of_b58check_exn commits)
+    else
+      Store.Chain_data.Checkpoint.read_exn (Store.Chain_data.get chain_store) >>= fun checkpoint ->
+      Lwt.return [ Block_header.hash checkpoint ]
+  end >>= fun commits ->
+  Error_monad.filter_map_p begin fun commit_block_hash ->
     Store.Block.Header.read_opt (block_store, commit_block_hash) >>= function
     | None ->
         lwt_log_notice "Skipping unknown block %a"
@@ -152,6 +156,9 @@ let import data_dir filename =
   let context_root = context_dir data_dir in
   let store_root = store_dir data_dir in
   let chain_id = Chain_id.of_block_hash genesis.block in
+  Node_data_version.ensure_data_dir data_dir >>=? fun () ->
+  Lwt_lock_file.create
+    ~unlink_on_exit:true (Node_data_version.lock_file data_dir) >>=? fun () ->
   Store.init store_root >>=? fun store ->
   let chain_store = Store.Chain.get store chain_id in
   let block_store = Store.Block.get chain_store in
@@ -159,7 +166,8 @@ let import data_dir filename =
   (* TODO : Check if really needed *)
   let patch_context = Some (patch_context None) in
 
-  State.init ~context_root ~store_root ~history_mode:Rolling ?patch_context genesis >>=? fun (_state,chain_state,context_index) ->
+  State.init ~context_root ~store_root ~history_mode:Rolling ?patch_context genesis
+  >>=? fun (_state, chain_state, context_index, _history_mode) ->
   Printf.printf "State.init OK\n%!";
 
   (* Restore context *)
