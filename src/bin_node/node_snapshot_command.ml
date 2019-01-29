@@ -42,12 +42,16 @@ let export data_dir filename commits =
   let chain_id = Chain_id.of_block_hash genesis.block in
   Store.init store_root >>=? fun store ->
   let chain_store = Store.Chain.get store chain_id in
+  let chain_data_store = Store.Chain_data.get chain_store in
   let block_store = Store.Block.get chain_store in
   begin if commits <> [] then
       Lwt.return (List.map Block_hash.of_b58check_exn commits)
     else
-      Store.Chain_data.Checkpoint.read_exn (Store.Chain_data.get chain_store) >>= fun checkpoint ->
-      Lwt.return [ Block_header.hash checkpoint ]
+      Store.Chain_data.Current_head.read_exn chain_data_store >>= fun head ->
+      Store.Block.Predecessors.read_exn (block_store, head) 6 >>= fun sixteenth_pred ->
+      lwt_log_notice "No commit specified, using %a (64th predecessor from the current head)"
+        Block_hash.pp sixteenth_pred >>= fun () ->
+      Lwt.return [ sixteenth_pred ]
   end >>= fun commits ->
   Error_monad.filter_map_p begin fun commit_block_hash ->
     Store.Block.Header.read_opt (block_store, commit_block_hash) >>= function
@@ -114,7 +118,7 @@ let export data_dir filename commits =
   end
     commits >>=? fun data_to_dump ->
   Store.close store;
-  Tezos_storage.Context.init context_root
+  Tezos_storage.Context.init ~readonly:true context_root
   >>= fun context_index ->
   Tezos_storage.Context.dump_contexts
     context_index
@@ -171,9 +175,7 @@ let import data_dir filename =
   Printf.printf "State.init OK\n%!";
 
   (* Restore context *)
-  Tezos_storage.Context.restore_contexts
-    context_index
-    ~filename >>=? fun restored_data ->
+  Tezos_storage.Context.restore_contexts context_index ~filename >>=? fun restored_data ->
 
   (* Process data imported from snapshot *)
   Error_monad.iter_s begin fun ((predecessor_block_header : Block_header.t), meta) ->
@@ -301,7 +303,11 @@ let import data_dir filename =
           Lwt.return (Some new_data, ())
         end >>= fun () ->
         Store.Chain_data.Save_point.store chain_data new_checkpoint >>= fun () ->
-
+        let rock_bottom_level = Int32.sub block_header.shell.level (Int32.of_int validation_result.max_operations_ttl) in
+        State.Block.read_exn chain_state block_hash >>= fun block ->
+        State.Block.predecessor_n block (validation_result.max_operations_ttl - 1) >>= fun rock_bottom ->
+        let rock_bottom_hash = Option.unopt_exn (Failure "rock bottom not in snapshot") rock_bottom in
+        Store.Chain_data.Rock_bottom.store chain_data (rock_bottom_level, rock_bottom_hash) >>= fun () ->
         return_unit
       end
   end
