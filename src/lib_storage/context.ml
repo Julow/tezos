@@ -511,16 +511,16 @@ let set_master index commit =
 
 (* Context dumping *)
 
-module Block_data = struct
+module Pruned_block = struct
 
-  type pruned_block = {
+  type t = {
     block_header : Block_header.t ;
     operations : (int * Operation.t list ) list ;
     operation_hashes : (int * Operation_hash.t list) list ;
     predecessors : (int * Block_hash.t) list ;
   }
 
-  let pruned_block_encoding =
+  let encoding =
     let open Data_encoding in
     conv
       (fun { block_header ; operations ; operation_hashes ; predecessors} ->
@@ -534,42 +534,43 @@ module Block_data = struct
          (req "predecessors" (list (tup2 int31 Block_hash.encoding)))
       )
 
+  let to_bytes x =
+    Data_encoding.Binary.to_bytes_exn encoding x
+
+  let of_bytes x =
+    Data_encoding.Binary.of_bytes encoding x
+
+end
+
+module Block_data = struct
+
   type t = {
     block_header : Block_header.t ;
     operations : Operation.t list list ;
-    old_blocks : pruned_block list ;
   }
 
-  let block_data_encoding =
+  let encoding =
     let open Data_encoding in
     conv
       (fun { block_header  ;
-             operations ;
-             old_blocks} ->
+             operations} ->
         (block_header,
-         operations,
-         old_blocks))
+         operations))
       (fun (block_header,
-            operations,
-            old_blocks) ->
+            operations) ->
         { block_header ;
-          operations ;
-          old_blocks})
-      (obj3
+          operations})
+      (obj2
          (req "block_header" (dynamic_size Block_header.encoding))
          (req "operations"
             (list (list (dynamic_size Operation.encoding))))
-         (* (req "old_block_headers"
-          *    (list (dynamic_size Block_header.encoding))) *)
-         (req "old_blocks"
-            (list pruned_block_encoding))
       )
 
   let to_bytes x =
-    Data_encoding.Binary.to_bytes_exn block_data_encoding x
+    Data_encoding.Binary.to_bytes_exn encoding x
 
   let of_bytes x =
-    Data_encoding.Binary.of_bytes block_data_encoding x
+    Data_encoding.Binary.of_bytes encoding x
 
   let empty = {
     block_header =
@@ -586,7 +587,6 @@ module Block_data = struct
           context = Context_hash.zero;
         } };
     operations = [[]] ;
-    old_blocks = [] ;
   }
 
 end
@@ -684,6 +684,7 @@ module Dumpable_context = struct
   module Commit_hash = Context_hash
   module Block_header = Block_header
   module Block_data = Block_data
+  module Pruned_block = Pruned_block
 end
 module Context_dumper = Context_dump.Make(Dumpable_context)
 
