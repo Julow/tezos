@@ -308,6 +308,23 @@ let import data_dir filename =
         State.Block.predecessor_n block (validation_result.max_operations_ttl - 1) >>= fun rock_bottom ->
         let rock_bottom_hash = Option.unopt_exn (Failure "rock bottom not in snapshot") rock_bottom in
         Store.Chain_data.Rock_bottom.store chain_data (rock_bottom_level, rock_bottom_hash) >>= fun () ->
+        let rock_bottom_level =
+          Int32.(sub
+                   block_header.shell.level
+                   (of_int validation_result.max_operations_ttl)) in
+        State.Block.read_exn chain_state block_hash >>= fun rock_bottom_block ->
+        State.Block.predecessor_n
+          ~below_save_point:true
+          rock_bottom_block
+          validation_result.max_operations_ttl >>= fun rock_bottom ->
+        (* FIXME: raise a nice exception *)
+        let rock_bottom_hash =
+          Option.unopt_exn
+            (Failure "Failed to read rock bottom block")
+            rock_bottom in
+        Store.Chain_data.Rock_bottom.store
+          chain_data
+          (rock_bottom_level, rock_bottom_hash) >>= fun () ->
         return_unit
       end
   end
