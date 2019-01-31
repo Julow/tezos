@@ -828,14 +828,13 @@ module Make
     let update_width s c = s.width <- max s.width (List.length c)
     let update_depth s n = s.depth <- max s.depth n
 
+    external get_64: string -> int -> int64 = "%caml_string_get64u"
+
     module Tbl = Hashset.Make(struct
-          type t = string
-          let equal x y = String.equal x y
-          let hash t =
-            assert (String.length t > H.digest_size);
-            EndianString.NativeEndian.get_int64 t (String.length t - 8)
-            |> Int64.to_int
-        end)
+        type t = string
+        let hash c = Int64.to_int (get_64 c (String.length c - 8))
+        let equal x y = String.equal x y
+      end)
 
     type t = {
       tbl   : Tbl.t;
@@ -887,19 +886,18 @@ module Make
           let k = H.of_raw (Cstruct.of_string k) in
           Fmt.failwith "promote %s: cannot promote key %a\n%!" msg H.pp k
 
-    let mem t k =
-      if Tbl.mem t.tbl k then Lwt.return true
-      else Raw.mem t.new_db k
+    let mem t k = Tbl.mem t.tbl k
 
     let copy_contents t k =
       Lwt_switch.check t.switch;
       let k = P.XContents.of_key k in
-      mem t k >>= function
-      | true  -> Lwt.return ()
-      | false ->
+      if mem t k then
+        Lwt.return ()
+      else (
         Tbl.add t.tbl k;
         incr_contents t.stats;
         promote "contents" t k
+      )
 
     let copy_node t k =
       let rec aux x =
@@ -910,30 +908,30 @@ module Make
             promote "node" t ks >>= fun () ->
             aux todo
         | (ks, k, `Gray , n) :: todo ->
-            mem t ks >>= function
-            | true  -> aux todo
-            | false ->
-                Tbl.add t.tbl ks;
-                P.XNode.unsafe_find t.old_db k >|= Option.get >>= fun v ->
-                let children = P.Node.Val.list v in
-                incr_nodes t.stats;
-                update_width t.stats children;
-                update_depth t.stats n;
-                let todo = ref ((ks, k, `Black, n) :: todo) in
-                Lwt_list.iter_p (fun (_, c) -> match c with
-                    | `Contents (k, _) -> copy_contents t k
-                    | `Node k ->
-                        let ks = P.XNode.of_key k in
-                        todo := (ks, k, `Gray, n+1) :: !todo;
-                        Lwt.return ()
-                  ) children
-                >>= fun () ->
-                aux !todo
+            if mem t ks then
+              aux todo
+            else (
+              Tbl.add t.tbl ks;
+              P.XNode.unsafe_find t.old_db k >|= Option.get >>= fun v ->
+              let children = P.Node.Val.list v in
+              incr_nodes t.stats;
+              update_width t.stats children;
+              update_depth t.stats n;
+              let todo = ref ((ks, k, `Black, n) :: todo) in
+              Lwt_list.iter_p (fun (_, c) -> match c with
+                  | `Contents (k, _) -> copy_contents t k
+                  | `Node k ->
+                      let ks = P.XNode.of_key k in
+                      todo := (ks, k, `Gray, n+1) :: !todo;
+                      Lwt.return ()
+                ) children
+              >>= fun () ->
+              aux !todo
+            )
       in
       let ks = P.XNode.of_key k in
-      mem t ks >>= function
-      | true  -> Lwt.return ()
-      | false -> aux [ks, k, `Gray, 0]
+      if mem t ks then Lwt.return ()
+      else aux [ks, k, `Gray, 0]
 
     let copy_commit t k =
       Lwt_switch.check t.switch;
@@ -997,10 +995,9 @@ module Make
             (int_of_float ((!last_time -. init_time) /. 60.))
             (i+1) (List.length roots) pp_stats t.stats;
           (* flush to disk regularly to not hold too much data into RAM *)
-          if i mod 1000 = 0 then (
-            Irmin_GC.Tbl.clear t.tbl;
+          if i mod 1000 = 0 then
             Raw.commit "flush roots" t.new_db
-          ) else
+          else
             Lwt.return ()
         ) else
           Lwt.return ();
