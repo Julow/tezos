@@ -252,21 +252,20 @@ module AO (K: Irmin.Hash.S) (V: Irmin.Contents.S0) (Conv: sig
   let mem db key =
     Raw.mem db (Conv.of_key key)
 
-  let unsafe_find db key =
+  let find db key =
     Raw.find db (Conv.of_key key) @@ fun v ->
     Conv.to_value v
 
-  let find db key =
-    unsafe_find db key
+  let find_v db key =
+    Raw.find db (Conv.of_key key) @@ fun v ->
+    Conv.to_value v |>> fun x ->
+    Ok (v, x)
 
-  let unsafe_add db v =
+  let add db v =
     let k = Conv.digest v in
     let v = Conv.of_value v in
     Raw.add db (Conv.of_key k) v >|= fun () ->
     k
-
-  let add db v =
-    unsafe_add db v
 
 end
 
@@ -865,7 +864,12 @@ module Make
     let promote_val t k v =
       Raw.add_cstruct t.new_db k v
 
-    let is_node k = String.length k > 4 && String.sub k 0 4 = "node"
+    let is_node k =
+      String.length k > 4
+      && k.[0] = 'n'
+      && k.[1] = 'o'
+      && k.[2] = 'd'
+      && k.[3] = 'e'
 
     let upgrade_node t v = match P.XNode.version v with
       | `V2 -> `Cstruct v
@@ -877,8 +881,11 @@ module Make
               Fmt.failwith "Cannot upgrade node %S: %s\n%!"
                 (Cstruct.to_string v) e
 
-    let promote msg t k =
-      Raw.find t.old_db k (fun x -> Ok x) >>= function
+    let promote msg t ?old k =
+      (match old with
+       | Some _ -> Lwt.return old
+       | None   -> Raw.find t.old_db k (fun x -> Ok x))
+      >>= function
       | Some v ->
           if is_node k then Raw.add t.new_db k( upgrade_node t v)
           else promote_val t k v
@@ -904,20 +911,20 @@ module Make
         Lwt_switch.check t.switch;
         match x with
         | []                         -> Lwt.return ()
-        | (ks, _, `Black, _) :: todo ->
-            promote "node" t ks >>= fun () ->
+        | (ks, _, `Black old, _) :: todo ->
+            promote "node" t ks ~old >>= fun () ->
             aux todo
         | (ks, k, `Gray , n) :: todo ->
             if mem t ks then
               aux todo
             else (
               Tbl.add t.tbl ks;
-              P.XNode.unsafe_find t.old_db k >|= Option.get >>= fun v ->
+              P.XNode.find_v t.old_db k >|= Option.get >>= fun (buf, v) ->
               let children = P.Node.Val.list v in
               incr_nodes t.stats;
               update_width t.stats children;
               update_depth t.stats n;
-              let todo = ref ((ks, k, `Black, n) :: todo) in
+              let todo = ref ((ks, k, `Black buf, n) :: todo) in
               Lwt_list.iter_p (fun (_, c) -> match c with
                   | `Contents (k, _) -> copy_contents t k
                   | `Node k ->
@@ -935,12 +942,12 @@ module Make
 
     let copy_commit t k =
       Lwt_switch.check t.switch;
-      P.XCommit.unsafe_find t.old_db k >|= Option.get >>= fun v ->
+      P.XCommit.find_v t.old_db k >|= Option.get >>= fun (buf, v) ->
       let k = P.XCommit.of_key k in
       (* we ignore the parents *)
       copy_node t (P.Commit.Val.node v) >>= fun () ->
       incr_commits t.stats;
-      promote "commit" t k
+      promote "commit" t k ~old:buf
 
     let root repo =
       let c = repo.P.Repo.config in
