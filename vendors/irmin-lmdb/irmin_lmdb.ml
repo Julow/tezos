@@ -39,23 +39,10 @@ open Lwt.Infix
 
 type wtxn = Lmdb.rw Lmdb.txn * Lmdb.db
 
-(* The GC has 3 modes:
-   - normal: all reads and writes are done normally on the main database file.
-   - promotion: a (concurrent) promotion to a different database file is in
-     progresss.
-   - pivot: eg. "stop-the-world" all the operations are stopped, the database
-     files are swapped on disk. *)
-
-type mode =
-  | Normal
-  | Promotion
-  | Pivot
-
 type t = {
   root: string ;
   readonly: bool;
   mutable db: Lmdb.t ;
-  mutable gc_mode: mode;
   mutable wtxn: wtxn option;
 }
 
@@ -160,7 +147,6 @@ let make conf =
     let db = open_db ~root ~mapsize ~readonly in
     let db = {
       db; root; readonly;
-      gc_mode = Normal;
       wtxn = None;
     } in
     Hashtbl.add dbs (root, readonly) db;
@@ -988,7 +974,6 @@ module Make
   end
 
   let promote_all ~(repo:repo) ?before_pivot ~branches t roots =
-    repo.db.gc_mode <- Promotion;
     let init_time = Unix.gettimeofday () in
     let last_time = ref init_time in
     Lwt_list.iteri_s (fun i k ->
@@ -1014,9 +999,7 @@ module Make
      | None   -> Lwt.return ()
      | Some t -> t ()
     ) >>= fun () ->
-    repo.db.gc_mode <- Pivot;
     Irmin_GC.pivot ~branches repo t >|= fun () ->
-    repo.db.gc_mode <- Normal;
     t.stats
 
   let gc ~repo ?before_pivot ?(branches=[]) ?switch roots =
