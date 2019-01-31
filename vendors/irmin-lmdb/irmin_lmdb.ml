@@ -867,7 +867,21 @@ module Make
               Fmt.failwith "Cannot upgrade node %S: %s\n%!"
                 (Cstruct.to_string v) e
 
+    let init_time = lazy (Unix.gettimeofday ())
+    let last_time = ref 0.
+
+    let print_message t =
+      let current_time = Unix.gettimeofday () in
+      if current_time -. !last_time > 5. (* print something every 5s *)
+      then (
+        last_time := current_time;
+        Fmt.pr "GC: %d min elapsed - %a\n%!"
+          (int_of_float ((!last_time -. Lazy.force init_time) /. 60.))
+          pp_stats t.stats;
+      )
+
     let promote msg t ?old k =
+      print_message t;
       (match old with
        | Some _ -> Lwt.return old
        | None   -> Raw.find t.old_db k (fun x -> Ok x))
@@ -974,25 +988,11 @@ module Make
   end
 
   let promote_all ~(repo:repo) ?before_pivot ~branches t roots =
-    let init_time = Unix.gettimeofday () in
-    let last_time = ref init_time in
     Lwt_list.iteri_s (fun i k ->
         Irmin_GC.copy_commit t k >>= fun () ->
-        let current_time = Unix.gettimeofday () in
-        if current_time -. !last_time > 5. (* print something every 5s *)
-        || i = 0 || i = List.length roots - 1
-        then (
-          last_time := current_time;
-          Fmt.pr "GC: %d min elapsed - %5d/%d %a\n%!"
-            (int_of_float ((!last_time -. init_time) /. 60.))
-            (i+1) (List.length roots) pp_stats t.stats;
-          (* flush to disk regularly to not hold too much data into RAM *)
-          if i mod 1000 = 0 then
-            Raw.commit "flush roots" t.new_db
-          else
-            Lwt.return ()
-        ) else
-          Lwt.return ();
+        (* flush to disk regularly to not hold too much data into RAM *)
+        if i mod 1000 = 0 then Raw.commit "flush roots" t.new_db
+        else Lwt.return ()
       ) roots
     >>= fun () ->
     (match before_pivot with
