@@ -1015,7 +1015,6 @@ module Make
       go
 
     let rec write_thread ~signal context () =
-      Fmt.epr "Write thread wants the lock.\n%!" ;
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
@@ -1039,7 +1038,6 @@ module Make
           write_thread ~signal context ()
 
     let rec stop_promotion context =
-      Fmt.epr "Stop thread wants the lock.\n%!" ;
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (-1) with
       | None ->
