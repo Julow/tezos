@@ -1123,17 +1123,14 @@ module Make
 
     let copy_root gc k =
       let k' = P.XNode.of_key k in
-      if mem gc k' then ()
-      else (
-        pass gc [ k, k' ] ;
-        promote "root" gc k'
-      )
+      if mem gc k' then Lwt.return ()
+      else pass gc [ k, k' ] >|= fun () -> promote "root" gc k'
 
     let copy_commit gc k =
       Lwt_switch.check gc.switch;
       P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (buf, v) ->
       let k' = P.XCommit.of_key k in
-      copy_root gc (P.Commit.Val.node v) ;
+      copy_root gc (P.Commit.Val.node v) >>= fun () ->
       incr_commits gc.stats ;
       promote "commit" gc k' ~old:buf ;
       Lwt.return ()
