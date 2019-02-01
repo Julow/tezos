@@ -1028,7 +1028,7 @@ module Make
         | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
         | None ->
             if !bootstrap
-            then ( Lwt_condition.signal signal () ; Lwt.return () )
+            then ( Fmt.epr "End of [%d].\n%!" thread ; Lwt_condition.signal signal () ; Lwt.return () )
             else ( bootstrap := true ; go () ) in
       go
 
