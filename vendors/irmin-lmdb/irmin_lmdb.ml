@@ -977,6 +977,7 @@ module Make
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
+        Fmt.kstrf ignore "Scan %a.\n%!" H.pp value.key ;
         xnode_find_v context.gc.old_db value.key |> Option.get |> fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
@@ -1174,7 +1175,6 @@ module Make
 
   let promote_all ~(repo:repo) ?before_pivot ~branches t roots =
     Lwt_list.iteri_s (fun i k ->
-        Lwt_unix.sleep 1. >>= fun () ->
         Irmin_GC.copy_commit t k >>= fun () ->
         (* flush to disk regularly to not hold too much data into RAM *)
         if i mod 1000 = 0 then Raw.commit "flush roots" t.new_db
