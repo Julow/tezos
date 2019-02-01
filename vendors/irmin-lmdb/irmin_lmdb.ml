@@ -1030,6 +1030,8 @@ module Make
       | None -> Lwt_condition.signal signal () ; Lwt.return ()
 
     let rec write_thread ~signal context () =
+      Fmt.epr "Start to promote an object from the ring-buffer.\n%!" ;
+
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
@@ -1092,6 +1094,7 @@ module Make
         let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread1 in
         let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread2 in
         let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread3 in
+
         let thread_to_promote () =
           Lwt_preemptive.detach
             (fun signal -> Lwt.async (write_thread ~signal context))
