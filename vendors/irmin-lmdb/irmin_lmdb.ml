@@ -954,10 +954,14 @@ module Make
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
 
+    [@@@warning "-32"]
+
     let xnode_find_v db key =
       raw_find db (P.XNode.of_key key) @@ fun v ->
       P.XNode.to_value v |>> fun x ->
       Ok (v, x)
+
+    [@@@warning "+32"]
 
     let scan context value =
       let k' = value.derivation in
