@@ -826,6 +826,7 @@ module Make
 
       val generate : unit -> t
       val equal : t -> t -> bool
+      val hash : t -> int
       val to_int : t -> int
       val of_int_exn : int -> t
     end = struct
@@ -837,21 +838,12 @@ module Make
 
       let equal a b = (compare : int -> int -> int) a b = 0
 
+      let hash x = x
       let to_int x = x
       let of_int_exn x = if x < 0 then assert false ; x
     end
 
-    module Value = struct
-      type t = { id : Uniq.t; value : string }
-      let hash { id; _ } = Uniq.to_int id
-      let equal { id= a; _ } { id= b; _ } = Uniq.equal a b
-
-      let with_sentinel =
-        let sentinel = "\xF0\x0D\xBA\xB1" in
-        fun uniq -> { id= uniq; value= sentinel }
-    end
-
-    module WeakTbl = Weak.Make(Value)
+    module TransTbl = Hashtbl.Make(Uniq)
 
     type t = {
       tbl   : Tbl.t;
@@ -959,7 +951,7 @@ module Make
     and context =
       { rd : rd_queue protected
       ; wr : wr_queue protected
-      ; weak : WeakTbl.t
+      ; tbl : string TransTbl.t
       ; more : unit Lwt_condition.t
       ; less : unit Lwt_condition.t
       ; gc : t }
@@ -1004,7 +996,7 @@ module Make
                      let uniq = Uniq.generate () in
                      let k' = P.XContents.of_key k in
                      Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
-                     WeakTbl.add context.weak { Value.id= uniq; value= k' } ;
+                     TransTbl.add context.tbl uniq k' ;
                      safe_to_promote context uniq)
             | `Node k ->
                 Lwt_mutex.with_lock context.rd.mutex
@@ -1025,7 +1017,7 @@ module Make
             ignore @@ Queue.pop context.rd.value ;
             let uniq = Uniq.generate () in
             Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
-            WeakTbl.add context.weak { Value.id= uniq; value= k } ;
+            TransTbl.add context.tbl uniq k ;
             safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
         | to_scan ->
             ignore @@ Queue.pop context.rd.value ;
@@ -1050,8 +1042,8 @@ module Make
       | Some uniq ->
           Fmt.epr "Promote %d and write it to the next generation.\n%!" uniq ;
 
-          let ({ Value.value= k'; _ } as value) = WeakTbl.find context.weak (Value.with_sentinel (Uniq.of_int_exn uniq)) in
-          WeakTbl.remove context.weak value ; (* not sure. *)
+          let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
+          TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ; (* not sure. *)
           Lwt_condition.signal context.less () ;
           Lwt_mutex.unlock context.wr.mutex ;
           (match mem context.gc k' with
@@ -1093,7 +1085,7 @@ module Make
                   ; wr= { value= wr_queue; mutex= Lwt_mutex.create () }
                   ; less = Lwt_condition.create ()
                   ; more = Lwt_condition.create ()
-                  ; weak = WeakTbl.create 0x100
+                  ; tbl = TransTbl.create 0x100
                   ; gc } in
       let context = make_context_from roots in
       let scan_and_write_threads () =
