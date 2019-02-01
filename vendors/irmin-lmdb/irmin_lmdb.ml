@@ -1055,6 +1055,8 @@ module Make
           write_thread ~signal context ()
 
     let rec stop_promotion context =
+      Fmt.epr "Waiting to stop promotion process.\n%!" ;
+
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (-1) with
       | None ->
