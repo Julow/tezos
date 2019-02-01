@@ -1051,10 +1051,13 @@ module Make
           Lwt_condition.signal context.less () ;
           Lwt_mutex.unlock context.wr.mutex ;
           (match mem context.gc k' with
-           | true -> write_thread ~signal context ()
+           | true ->
+               Fmt.epr "[wr] %d already promoted.\n%!" uniq ;
+               write_thread ~signal context ()
            | false ->
                incr_contents context.gc.stats ;
                promote "node" context.gc k' ;
+               Fmt.epr "[wr] %d promoted correctly.\n%!" uniq ;
                write_thread ~signal context ())
       | None ->
           Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
