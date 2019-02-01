@@ -877,20 +877,6 @@ module Make
       find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
       |> of_result "find"
 
-    let raw_add_string db k v =
-      (get_wtxn db |>> fun (txn, ddb) ->
-      Lmdb.put_string txn ddb k v)
-      |> of_result "add_string"
-
-    let raw_add_cstruct db k v =
-      (get_wtxn db |>> fun (txn, ddb) ->
-      Lmdb.put txn ddb k (Cstruct.to_bigarray v))
-    |> of_result "add_ba"
-
-    let raw_add db k = function
-      | `String v   -> raw_add_string db k v
-      | `Cstruct v  -> raw_add_cstruct db k v
-
     let promote_val t k v =
       Raw.add_cstruct t.new_db k v
 
