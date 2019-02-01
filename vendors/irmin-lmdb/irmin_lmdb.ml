@@ -892,7 +892,7 @@ module Make
       | `Cstruct v  -> raw_add_cstruct db k v
 
     let promote_val t k v =
-      raw_add_cstruct t.new_db k v
+      Raw.add_cstruct t.new_db k v
 
     let is_node k =
       String.length k > 4
@@ -933,7 +933,7 @@ module Make
       |> function
       | Some v ->
           if is_node k
-          then raw_add t.new_db k( upgrade_node t v)
+          then Raw.add t.new_db k( upgrade_node t v)
           else promote_val t k v
       | None   ->
           let k = H.of_raw (Cstruct.of_string k) in
@@ -1043,7 +1043,7 @@ module Make
                write_thread ~signal context ()
            | false ->
                incr_contents context.gc.stats ;
-               promote "node" context.gc k' ;
+               promote "node" context.gc k' >>= fun () ->
                write_thread ~signal context ())
       | None ->
           Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
@@ -1126,7 +1126,7 @@ module Make
       if mem gc k'
       then Lwt.return ()
       else
-        pass gc [ k, k' ] >|= fun () -> promote "root" gc k' ~old:buf
+        pass gc [ k, k' ] >>= fun () -> promote "root" gc k' ~old:buf
 
     let copy_commit gc k =
       Lwt_switch.check gc.switch;
@@ -1134,8 +1134,7 @@ module Make
       let k' = P.XCommit.of_key k in
       copy_root gc (P.Commit.Val.node v) >>= fun () ->
       incr_commits gc.stats ;
-      promote "commit" gc k' ~old:buf ;
-      Lwt.return ()
+      promote "commit" gc k' ~old:buf
 
     let root repo =
       let c = repo.P.Repo.config in
@@ -1157,8 +1156,8 @@ module Make
       (* promote the live refs *)
       Lwt_list.iter_p (fun br ->
           let k = P.Branch.lmdb_of_branch br in
-          promote "refs" t k ; Lwt.return ()
-        ) branches
+          promote "refs" t k )
+        branches
       >>= fun () ->
 
       (* fsync *)
