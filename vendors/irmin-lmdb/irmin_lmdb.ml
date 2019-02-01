@@ -851,10 +851,6 @@ module Make
       | Ok v -> v
       | Error err -> Fmt.failwith "%s: lmdb error %a.\n%!" computation Lmdb.pp_error err
 
-    let raw_mem db k =
-      with_read_db db ~f:{ f = fun txn db -> Lmdb.mem txn db k }
-      |> of_result "mem"
-
     let raw_find db key of_ba =
       find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
       |> of_result "find"
@@ -1023,7 +1019,6 @@ module Make
       )
 
     let copy_commit gc k =
-      Printf.printf "XXX copy_commit\n%!";
       Lwt_switch.check gc.switch;
       P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (buf, v) ->
       let k' = P.XCommit.of_key k in
