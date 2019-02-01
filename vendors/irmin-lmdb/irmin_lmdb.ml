@@ -954,12 +954,6 @@ module Make
       ; less : unit Lwt_condition.t
       ; gc : t }
 
-    let xnode_find_v db key =
-      raw_find db (P.XNode.of_key key)
-        (fun v ->
-          P.XNode.to_value v |>> fun x ->
-          Ok (v, x))
-
     let rec safe_to_promote context (uniq : Uniq.t) =
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (uniq :> int) with
