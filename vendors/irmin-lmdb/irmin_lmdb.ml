@@ -1125,7 +1125,14 @@ module Make
     let copy_root gc k =
       let k' = P.XNode.of_key k in
       if mem gc k' then Lwt.return ()
-      else pass gc [ k, k' ] >|= fun () -> promote "root" gc k'
+      else
+        xnode_find_v gc.old_db k |> Option.get |> fun (_, v) ->
+        let children = P.Node.Val.list v in
+        let children = List.map (fun (_, c) -> match c with
+            | `Node k -> k, P.XNode.of_key k
+            | `Contents (k, _) -> k, P.XContents.of_key k)
+            children in
+        pass gc (children @ [ k, k' ]) >|= fun () -> promote "root" gc k'
 
     let copy_commit gc k =
       Lwt_switch.check gc.switch;
