@@ -925,9 +925,8 @@ module Make
       )
 
     let promote msg t ?old k =
-      Fmt.epr "Promote %a.\n%!" H.pp (H.of_raw (Cstruct.of_string k)) ;
-
       print_message t;
+      Fmt.epr "Promote %a.\n%!" H.pp (H.of_raw (Cstruct.of_string k)) ;
       (match old with
        | Some _ -> old
        | None   -> raw_find t.old_db k (fun x -> Ok x))
