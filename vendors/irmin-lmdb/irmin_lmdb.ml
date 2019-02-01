@@ -1055,6 +1055,7 @@ module Make
                Fmt.epr "[wr] %d already promoted.\n%!" uniq ;
                write_thread ~signal context ()
            | false ->
+               Fmt.epr "[wr] %d will be promoted correctly.\n%!" uniq ;
                incr_contents context.gc.stats ;
                promote "node" context.gc k' ;
                Fmt.epr "[wr] %d promoted correctly.\n%!" uniq ;
