@@ -1029,7 +1029,7 @@ module Make
         | None ->
             if !bootstrap
             then ( Fmt.epr "End of [%d].\n%!" thread ; Lwt.wakeup signal () ; Lwt.return () )
-            else ( bootstrap := true ; go () ) in
+            else ( bootstrap := true ; Lwt_unix.sleep 1. >>= go ) in
       go
 
     let rec write_thread ~signal context () =
