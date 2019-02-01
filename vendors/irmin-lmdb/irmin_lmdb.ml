@@ -1117,7 +1117,7 @@ module Make
           Lwt_condition.wait signal_to_write in
 
         Fmt.epr "Start to do the pass!.\n%!" ;
-        Lwt_preemptive.run_in_main final in
+        final () in
 
       scan_and_write_threads ()
 
