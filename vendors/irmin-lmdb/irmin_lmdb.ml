@@ -973,12 +973,13 @@ module Make
         update_depth context.gc.stats value.depth ;
         Lwt_list.iter_p (fun (_, c) -> match c with
             | `Contents (k, _) ->
+                incr_contents context.gc.stats ;
+
                 Lwt_mutex.with_lock context.rd.mutex
                   (fun () ->
                      let uniq = Uniq.generate () in
                      let k' = P.XContents.of_key k in
                      TransTbl.add context.tbl uniq k' ;
-                     incr_contents context.gc.stats ;
                      safe_to_promote context uniq)
             | `Node k ->
                 Lwt_mutex.with_lock context.rd.mutex
@@ -1023,7 +1024,7 @@ module Make
           Lwt.return ()
       | Some uniq ->
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
-          TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ; (* not sure. *)
+          TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
           Lwt_mutex.unlock context.wr.mutex ;
           (match mem context.gc k' with
