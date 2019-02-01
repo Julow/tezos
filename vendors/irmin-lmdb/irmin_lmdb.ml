@@ -966,14 +966,19 @@ module Make
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
 
+    let xnode_find_v db key =
+      raw_find db (P.XNode.of_key key) @@ fun v ->
+      P.XNode.to_value v |>> fun x ->
+      Ok (v, x)
+
     let scan context value =
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        Fmt.epr "Try to load %a.\n%!" H.pp value.key ;
-        P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
+        Fmt.kstrf ignore "Scan %a.\n%!" H.pp value.key ;
+        xnode_find_v context.gc.old_db value.key |> Option.get |> fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
         update_width context.gc.stats children ;
