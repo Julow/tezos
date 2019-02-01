@@ -1115,7 +1115,8 @@ module Make
     let copy_root gc k =
       P.XNode.find_v gc.old_db k >|= Option.get >>= fun (buf, _) ->
       let k' = P.XNode.of_key k in
-      if mem gc k' then Lwt.return ()
+      if mem gc k'
+      then Lwt.return ()
       else
         pass gc [ k, k' ] >|= fun () -> promote "root" gc k' ~old:buf
 
