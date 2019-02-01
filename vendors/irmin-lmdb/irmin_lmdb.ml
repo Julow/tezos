@@ -974,8 +974,8 @@ module Make
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
 
-    let scan context value =
-      Fmt.epr "Scan %a.\n%!" H.pp value.key ;
+    let scan ~thread context value =
+      Fmt.epr "[%d]: Scan %a.\n%!" thread H.pp value.key ;
 
       let k' = P.XNode.of_key value.key in
       match mem context.gc k' with
@@ -993,7 +993,7 @@ module Make
                   (fun () ->
                      let uniq = Uniq.generate () in
                      let k' = P.XContents.of_key k in
-                     Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
+                     Fmt.epr "[%d] Add contents:%d to the table.\n%!" thread (uniq :> int) ;
                      TransTbl.add context.tbl uniq k' ;
                      safe_to_promote context uniq)
             | `Node k ->
@@ -1006,15 +1006,15 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let rec dispatcher ~signal context () =
+    let rec dispatcher ~thread ~signal context () =
       let rec consume_to_next_scan () =
-        Fmt.epr "Consume to the next Scan value.\n%!" ;
+        Fmt.epr "[%d]: Consume to the next Scan value.\n%!" thread ;
 
         match Queue.top context.rd.value with
         | { status= Do_promotion; derivation= k; _ } ->
             ignore @@ Queue.pop context.rd.value ;
             let uniq = Uniq.generate () in
-            Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
+            Fmt.epr "[%d]: Add node:%d to the table.\n%!" (uniq :> int) thread ;
             TransTbl.add context.tbl uniq k ;
             safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
         | to_scan ->
@@ -1023,22 +1023,22 @@ module Make
         | exception Queue.Empty -> Lwt.return None in
 
       Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
-      | Some value -> scan context value >>= dispatcher ~signal context
+      | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
       | None -> Lwt_condition.signal signal () ; Lwt.return ()
 
     let rec write_thread ~signal context () =
-      Fmt.epr "Start to promote an object from the ring-buffer.\n%!" ;
+      Fmt.epr "[wr] Start to promote an object from the ring-buffer.\n%!" ;
 
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
-          Fmt.epr "Nothing to promote more.\n%!" ;
+          Fmt.epr "[wr] Nothing to promote more.\n%!" ;
 
           Lwt_condition.signal signal () ;
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
       | Some uniq ->
-          Fmt.epr "Promote %d and write it to the next generation.\n%!" uniq ;
+          Fmt.epr "[wr] Promote %d and write it to the next generation.\n%!" uniq ;
 
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ; (* not sure. *)
@@ -1056,7 +1056,7 @@ module Make
           write_thread ~signal context ()
 
     let rec stop_promotion context =
-      Fmt.epr "Waiting to stop promotion process.\n%!" ;
+      Fmt.epr "[stp] Waiting to stop promotion process.\n%!" ;
 
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (-1) with
@@ -1093,10 +1093,10 @@ module Make
         let signal_thread3 = Lwt_condition.create () in
         let signal_to_write = Lwt_condition.create () in
 
-        let thread0 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread0 in
-        let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread1 in
-        let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread2 in
-        let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread3 in
+        let thread0 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:0 ~signal context)) signal_thread0 in
+        let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:1 ~signal context)) signal_thread1 in
+        let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:2 ~signal context)) signal_thread2 in
+        let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:3 ~signal context)) signal_thread3 in
 
         let thread_to_promote () =
           Lwt_preemptive.detach
