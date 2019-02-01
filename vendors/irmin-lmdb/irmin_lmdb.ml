@@ -1040,10 +1040,14 @@ module Make
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
+          Fmt.epr "Nothing to promote more.\n%!" ;
+
           Lwt_condition.signal signal () ;
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
       | Some uniq ->
+          Fmt.epr "Promote %d and write it to the next generation.\n%!" uniq ;
+
           let ({ Value.value= k'; _ } as value) = WeakTbl.find context.weak (Value.with_sentinel (Uniq.of_int_exn uniq)) in
           WeakTbl.remove context.weak value ; (* not sure. *)
           Lwt_condition.signal context.less () ;
