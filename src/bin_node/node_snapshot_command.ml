@@ -127,7 +127,7 @@ let export ?(export_rolling=false) data_dir filename blocks =
     context_index
     data_to_dump
     ~filename >>=? fun () ->
-  lwt_log_notice "Sucessfull export (in file %s)" filename >>= fun () ->
+  lwt_log_notice "Sucessful export (in file %s)" filename >>= fun () ->
   return_unit
 
 let import data_dir filename =
