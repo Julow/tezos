@@ -987,7 +987,7 @@ module Make
 
       let k' = P.XNode.of_key value.key in
       match mem context.gc k' with
-      | true -> assert false
+      | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
         xnode_find_v context.gc.old_db value.key |> Option.get |> fun (_, v) ->
@@ -1019,10 +1019,13 @@ module Make
 
         match Queue.top context.rd.value with
         | { status= Do_promotion; derivation= k; _ } ->
+            ignore @@ Queue.pop context.rd.value ;
             let uniq = Uniq.generate () in
             WeakTbl.add context.weak { Value.id= uniq; value= k } ;
             safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
-        | to_scan -> Lwt.return (Some to_scan)
+        | to_scan ->
+            ignore @@ Queue.pop context.rd.value ;
+            Lwt.return (Some to_scan)
         | exception Queue.Empty -> Lwt.return None in
 
       Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
