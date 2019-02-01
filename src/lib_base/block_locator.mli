@@ -50,7 +50,7 @@ val estimated_length: seed -> t -> int
 
 val compute:
   get_predecessor: (Block_hash.t -> int -> Block_hash.t option Lwt.t) ->
-  save_point:Block_hash.t -> size:int -> Block_hash.t -> Block_header.t ->
+  rock_bottom:Block_hash.t -> size:int -> Block_hash.t -> Block_header.t ->
   seed -> t Lwt.t
 (** [compute ~get_predecessor ~genesis ~save_point ~rock_bottom
     ~size block_hash header seed] returns the sparse block locator

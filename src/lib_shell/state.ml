@@ -244,13 +244,13 @@ let predecessor_n ?(below_save_point = false) block_store block_hash distance =
 
 let compute_locator_from_hash chain_state ?(size = 200) head_hash seed =
   Shared.use chain_state.chain_data begin fun state ->
-    Lwt.return state.data.save_point
-  end >>= fun (_lvl, save_point_hash) ->
+    Lwt.return state.data.rock_bottom
+  end >>= fun (_lvl, rock_bottom) ->
   Shared.use chain_state.block_store begin fun block_store ->
     Store.Block.Header.read_exn (block_store, head_hash) >>= fun header ->
     Block_locator.compute
-      ~get_predecessor:(predecessor_n block_store)
-      ~save_point:save_point_hash
+      ~get_predecessor:(predecessor_n ~below_save_point:true block_store)
+      ~rock_bottom
       ~size
       head_hash header seed
   end
