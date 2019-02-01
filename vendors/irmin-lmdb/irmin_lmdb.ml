@@ -847,8 +847,34 @@ module Make
       let stats = stats () in
       { tbl; stats; new_db; old_db = repo.db; switch }
 
+    let of_result computation = function
+      | Ok v -> v
+      | Error err -> Fmt.failwith "%s: lmdb error %a.\n%!" computation Lmdb.pp_error err
+
+    let raw_mem db k =
+      with_read_db db ~f:{ f = fun txn db -> Lmdb.mem txn db k }
+      |> of_result "mem"
+
+    let raw_find db key of_ba =
+      find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
+      |> of_result "find"
+
+    let raw_add_string db k v =
+      (get_wtxn db |>> fun (txn, ddb) ->
+      Lmdb.put_string txn ddb k v)
+      |> of_result "add_string"
+
+    let raw_add_cstruct db k v =
+      (get_wtxn db |>> fun (txn, ddb) ->
+      Lmdb.put txn ddb k (Cstruct.to_bigarray v))
+    |> of_result "add_ba"
+
+    let raw_add db k = function
+      | `String v   -> raw_add_string db k v
+      | `Cstruct v  -> raw_add_cstruct db k v
+
     let promote_val t k v =
-      Raw.add_cstruct t.new_db k v
+      raw_add_cstruct t.new_db k v
 
     let is_node k =
       String.length k > 4
@@ -883,11 +909,11 @@ module Make
     let promote msg t ?old k =
       print_message t;
       (match old with
-       | Some _ -> Lwt.return old
-       | None   -> Raw.find t.old_db k (fun x -> Ok x))
-      >>= function
+       | Some _ -> old
+       | None   -> raw_find t.old_db k (fun x -> Ok x))
+      |> function
       | Some v ->
-          if is_node k then Raw.add t.new_db k( upgrade_node t v)
+          if is_node k then raw_add t.new_db k( upgrade_node t v)
           else promote_val t k v
       | None   ->
           let k = H.of_raw (Cstruct.of_string k) in
@@ -910,73 +936,59 @@ module Make
       ; wc : unit Lwt_condition.t
       ; gc : t }
 
+    let xnode_find_v db key =
+      raw_find db (P.XNode.of_key key)
+        (fun v ->
+          P.XNode.to_value v |>> fun x ->
+          Ok (v, x))
+
     let scan t value =
       let k' = P.XNode.of_key value.key in
-      if mem t.gc k' then Lwt.return ()
+      if mem t.gc k' then ()
       else (
         Tbl.add t.gc.tbl k' ;
-        P.XNode.find_v t.gc.old_db value.key >|= Option.get >>= fun (buf, v) ->
+        xnode_find_v t.gc.old_db value.key |> Option.get |> fun (buf, v) ->
         let children = P.Node.Val.list v in
         incr_nodes t.gc.stats ;
         update_width t.gc.stats children ;
         update_depth t.gc.stats value.depth ;
-        Lwt_list.iter_p (fun (_, c) -> match c with
+        List.iter (fun (_, c) -> match c with
             | `Contents (k, _) ->
                 let k' = P.XContents.of_key k in
-                Lwt_mutex.lock t.wr.mutex >>= fun () ->
                 Queue.push (Promote_and_continue_with (k', Some buf)) t.wr.value ;
-                Lwt_mutex.unlock t.wr.mutex ;
-                Lwt_condition.signal t.wc ();
-                Lwt.return ()
+                Lwt_condition.signal t.wc ()
             | `Node k ->
                 let k' = P.XNode.of_key k in
-                Lwt_mutex.lock t.rd.mutex >>= fun () ->
-                Queue.push { key=k; derivation= (k', Some buf); status= Do_scan; depth= value.depth + 1 } t.rd.value ;
-                Lwt_mutex.unlock t.rd.mutex ;
-                Lwt.return ())
-          children >>= fun () ->
-        Lwt_mutex.lock t.rd.mutex >>= fun () ->
-        Queue.push { value with status= Do_promotion } t.rd.value ;
-        Lwt_mutex.unlock t.rd.mutex ;
-        Lwt.return ()
+                Queue.push { key=k; derivation= (k', Some buf); status= Do_scan; depth= value.depth + 1 } t.rd.value )
+          children ;
+        Queue.push { value with status= Do_promotion } t.rd.value
       )
 
     let rec dispatcher context =
-      Lwt_mutex.lock context.rd.mutex >>= fun () ->
-      Lwt_mutex.lock context.wr.mutex >>= fun () ->
       try
         while (Queue.top context.rd.value).status = Do_promotion
         do let { derivation = k, buf; _ } = Queue.pop context.rd.value in
           Queue.push (Promote_and_continue_with (k, buf)) context.wr.value;
         done ;
         let value = Queue.pop context.rd.value in
-        Lwt_mutex.unlock context.wr.mutex ;
-        Lwt_condition.signal context.wc ();
-        Lwt_mutex.unlock context.rd.mutex ;
-        scan context value >>= fun () ->
+        Lwt_condition.signal context.wc () ;
+        scan context value ;
         dispatcher context
       with Queue.Empty ->
-        Lwt_mutex.unlock context.wr.mutex ;
-        Lwt_condition.signal context.wc ();
-        Lwt_mutex.unlock context.rd.mutex ;
-        Lwt.return ()
+        Lwt_condition.signal context.wc ()
 
     let rec write_thread context =
-      Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Queue.pop context.wr.value with
       | Stop ->
-          Lwt_mutex.unlock context.wr.mutex;
-          Lwt.return ()
+          Lwt_mutex.unlock context.wr.mutex
       | Promote_and_continue_with (k', buf) ->
-          Lwt_mutex.unlock context.wr.mutex;
-          if mem context.gc k' then Lwt.return ()
+          Lwt_mutex.unlock context.wr.mutex ;
+          if mem context.gc k' then ()
           else (
             incr_contents context.gc.stats;
             promote "whatever" context.gc k' ?old:buf
           )
-      | exception Queue.Empty ->
-          Lwt_condition.wait ~mutex:context.wr.mutex context.wc >>= fun () ->
-          write_thread context
+      | exception Queue.Empty -> write_thread context
 
     let pass gc roots =
       let make_context_from roots =
@@ -993,26 +1005,20 @@ module Make
                   ; wc = Lwt_condition.create ()
                   ; gc } in
       let context = make_context_from roots in
-      let scan_pool = Lwt_pool.create 4 (fun () -> Lwt.return context) in
       let scan_threads () =
-        Lwt.join
-          [ Lwt_pool.use scan_pool dispatcher
-          ; Lwt_pool.use scan_pool dispatcher
-          ; Lwt_pool.use scan_pool dispatcher
-          ; Lwt_pool.use scan_pool dispatcher ]
-        >>= fun () ->
-        Lwt_mutex.lock context.wr.mutex >>= fun () ->
-        Queue.push Stop context.wr.value ;
-        Lwt_mutex.unlock context.wr.mutex ;
-        Lwt_condition.signal context.wc ();
-        Lwt.return () in
-      Lwt.join [ scan_threads (); write_thread context ]
+          dispatcher context ;
+          dispatcher context ;
+          dispatcher context ;
+          dispatcher context ;
+          Queue.push Stop context.wr.value in
+      scan_threads () ;
+      write_thread context
 
     let copy_root gc k =
       let k' = P.XNode.of_key k in
-      if mem gc k' then Lwt.return ()
+      if mem gc k' then ()
       else (
-        pass gc [ k, (k', None) ] >>= fun () ->
+        pass gc [ k, (k', None) ] ;
         promote "root" gc k'
       )
 
@@ -1021,9 +1027,10 @@ module Make
       Lwt_switch.check gc.switch;
       P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (buf, v) ->
       let k' = P.XCommit.of_key k in
-      copy_root gc (P.Commit.Val.node v) >>= fun () ->
-      incr_commits gc.stats;
-      promote "commit" gc k' ~old:buf
+      copy_root gc (P.Commit.Val.node v) ;
+      incr_commits gc.stats ;
+      promote "commit" gc k' ~old:buf ;
+      Lwt.return ()
 
     let root repo =
       let c = repo.P.Repo.config in
@@ -1045,7 +1052,7 @@ module Make
       (* promote the live refs *)
       Lwt_list.iter_p (fun br ->
           let k = P.Branch.lmdb_of_branch br in
-          promote "refs" t k
+          promote "refs" t k ; Lwt.return ()
         ) branches
       >>= fun () ->
 
