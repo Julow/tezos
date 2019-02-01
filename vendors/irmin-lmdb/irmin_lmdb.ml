@@ -833,7 +833,7 @@ module Make
 
       let generate =
         let idx = ref (-1) in
-        fun () -> let res = !idx in incr idx ; res
+        fun () -> incr idx ; !idx
 
       let equal a b = (compare : int -> int -> int) a b = 0
 
