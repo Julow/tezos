@@ -1021,7 +1021,8 @@ module Make
 
     let rec bootstrap ~thread ~signal context () =
       (* mutex? *)
-      if Queue.is_empty context.rd.value
+      Lwt_mutex.with_lock context.rd.mutex (fun () -> Lwt.return (Queue.is_empty context.rd.value)) >>= fun res ->
+      if res
       then bootstrap ~thread ~signal context ()
       else dispatcher ~thread ~signal context ()
 
