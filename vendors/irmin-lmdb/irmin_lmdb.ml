@@ -1003,6 +1003,7 @@ module Make
                   (fun () ->
                      let uniq = Uniq.generate () in
                      let k' = P.XContents.of_key k in
+                     Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
                      WeakTbl.add context.weak { Value.id= uniq; value= k' } ;
                      safe_to_promote context uniq)
             | `Node k ->
@@ -1023,6 +1024,7 @@ module Make
         | { status= Do_promotion; derivation= k; _ } ->
             ignore @@ Queue.pop context.rd.value ;
             let uniq = Uniq.generate () in
+            Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
             WeakTbl.add context.weak { Value.id= uniq; value= k } ;
             safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
         | to_scan ->
