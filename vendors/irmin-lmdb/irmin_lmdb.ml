@@ -1024,7 +1024,7 @@ module Make
 
       Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
       | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
-      | None -> Lwt_condition.signal signal () ; Lwt.return ()
+      | None -> dispatcher ~thread ~signal context ()
 
     let rec write_thread ~signal context () =
       Fmt.epr "[wr] Start to promote an object from the ring-buffer.\n%!" ;
@@ -1126,13 +1126,7 @@ module Make
       let k' = P.XNode.of_key k in
       if mem gc k' then Lwt.return ()
       else
-        xnode_find_v gc.old_db k |> Option.get |> fun (_, v) ->
-        let children = P.Node.Val.list v in
-        let children = List.map (fun (_, c) -> match c with
-            | `Node k -> k, P.XNode.of_key k
-            | `Contents (k, _) -> k, P.XContents.of_key k)
-            children in
-        pass gc (children @ [ k, k' ]) >|= fun () -> promote "root" gc k'
+        pass gc [ k, k' ] >|= fun () -> promote "root" gc k'
 
     let copy_commit gc k =
       Lwt_switch.check gc.switch;
