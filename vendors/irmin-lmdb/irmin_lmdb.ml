@@ -999,8 +999,7 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let rec dispatcher ~thread ~signal context =
-      let bootstrap = ref false in
+    let rec dispatcher ~thread ~signal context () =
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
@@ -1017,10 +1016,14 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
         | Some value -> scan context value >>= dispatcher ~thread ~signal context
         | None ->
-            if !bootstrap
-            then ( Lwt.wakeup signal () ; Lwt.return () )
-            else ( bootstrap := true ; go () ) in
-      go
+            Lwt.wakeup signal () ; Lwt.return ()
+      in go ()
+
+    let rec bootstrap ~thread ~signal context () =
+      (* mutex? *)
+      if Queue.is_empty context.rd.value
+      then bootstrap ~thread ~signal context ()
+      else dispatcher ~thread ~signal context ()
 
     let rec write_thread ~signal context () =
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
@@ -1081,10 +1084,10 @@ module Make
         let waiter3, signal3 = Lwt.wait () in
         let waiter_writer, signal_writer = Lwt.wait () in
 
-        let thread0 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:0 ~signal context)) signal0 in
-        let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:1 ~signal context)) signal1 in
-        let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:2 ~signal context)) signal2 in
-        let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:3 ~signal context)) signal3 in
+        let thread0 () = Lwt_preemptive.detach (fun signal -> Lwt.async (bootstrap ~thread:0 ~signal context)) signal0 in
+        let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (bootstrap ~thread:1 ~signal context)) signal1 in
+        let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (bootstrap ~thread:2 ~signal context)) signal2 in
+        let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (bootstrap ~thread:3 ~signal context)) signal3 in
 
         let thread_to_promote () =
           Lwt_preemptive.detach
