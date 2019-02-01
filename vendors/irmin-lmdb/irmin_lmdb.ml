@@ -1019,7 +1019,7 @@ module Make
         | None ->
             if !bootstrap
             then ( Lwt.wakeup signal () ; Lwt.return () )
-            else ( bootstrap := true ; Lwt_unix.sleep 1. >>= go ) in
+            else ( bootstrap := true ; go () ) in
       go
 
     let rec write_thread ~signal context () =
