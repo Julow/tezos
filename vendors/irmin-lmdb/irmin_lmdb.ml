@@ -1114,6 +1114,7 @@ module Make
           Lwt.join [ thread0 (); thread1 (); thread2 () ; thread3 (); thread_to_promote (); thread_to_stop (); ] >>= fun () ->
           Lwt_condition.wait signal_to_write in
 
+        Fmt.epr "Start to do the pass!.\n%!" ;
         Lwt_preemptive.run_in_main final in
 
       scan_and_write_threads ()
