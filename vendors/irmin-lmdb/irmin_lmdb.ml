@@ -1006,25 +1006,31 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let rec dispatcher ~thread ~signal context () =
-      let rec consume_to_next_scan () =
-        Fmt.epr "[%d]: Consume to the next Scan value.\n%!" thread ;
+    let rec dispatcher ~thread ~signal context =
+      let bootstrap = ref false in
+      let rec go () =
+        let rec consume_to_next_scan () =
+          Fmt.epr "[%d]: Consume to the next Scan value.\n%!" thread ;
 
-        match Queue.top context.rd.value with
-        | { status= Do_promotion; derivation= k; _ } ->
-            ignore @@ Queue.pop context.rd.value ;
-            let uniq = Uniq.generate () in
-            Fmt.epr "[%d]: Add node:%d to the table.\n%!" (uniq :> int) thread ;
-            TransTbl.add context.tbl uniq k ;
-            safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
-        | to_scan ->
-            ignore @@ Queue.pop context.rd.value ;
-            Lwt.return (Some to_scan)
-        | exception Queue.Empty -> Lwt.return None in
+          match Queue.top context.rd.value with
+          | { status= Do_promotion; derivation= k; _ } ->
+              ignore @@ Queue.pop context.rd.value ;
+              let uniq = Uniq.generate () in
+              Fmt.epr "[%d]: Add node:%d to the table.\n%!" (uniq :> int) thread ;
+              TransTbl.add context.tbl uniq k ;
+              safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
+          | to_scan ->
+              ignore @@ Queue.pop context.rd.value ;
+              Lwt.return (Some to_scan)
+          | exception Queue.Empty -> Lwt.return None in
 
-      Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
-      | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
-      | None -> dispatcher ~thread ~signal context ()
+        Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
+        | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
+        | None ->
+            if !bootstrap
+            then ( Lwt_condition.signal signal () ; Lwt.return () )
+            else ( bootstrap := true ; go () ) in
+      go
 
     let rec write_thread ~signal context () =
       Fmt.epr "[wr] Start to promote an object from the ring-buffer.\n%!" ;
