@@ -1028,7 +1028,7 @@ module Make
         | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
         | None ->
             if !bootstrap
-            then ( Lwt_condition.signal signal () ; Lwt.return () )
+            then ( Fmt.epr "End of [%d].\n%!" thread ; Lwt_condition.signal signal () ; Lwt.return () )
             else ( bootstrap := true ; go () ) in
       go
 
@@ -1113,9 +1113,13 @@ module Make
             (fun context ->
                Lwt.async @@ fun () ->
                Lwt_condition.wait signal_thread0 >>= fun () ->
+               Fmt.epr "Thread 0 terminated.\n%!" ;
                Lwt_condition.wait signal_thread1 >>= fun () ->
+               Fmt.epr "Thread 1 terminated.\n%!" ;
                Lwt_condition.wait signal_thread2 >>= fun () ->
+               Fmt.epr "Thread 2 terminated.\n%!" ;
                Lwt_condition.wait signal_thread3 >>= fun () ->
+               Fmt.epr "Thread 3 terminated.\n%!" ;
                stop_promotion context)
             context in
 
