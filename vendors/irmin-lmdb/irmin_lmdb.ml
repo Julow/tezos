@@ -939,6 +939,8 @@ module Make
           Ok (v, x))
 
     let scan t value =
+      Fmt.epr "# scan %a.\n%!" H.pp value.key ;
+
       let k' = P.XNode.of_key value.key in
       if mem t.gc k' then ()
       else (
