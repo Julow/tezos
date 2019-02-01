@@ -1124,13 +1124,20 @@ module Make
             context in
 
         let final () =
-          Lwt.join [ thread0 (); thread1 (); thread2 () ; thread3 (); thread_to_promote (); thread_to_stop (); ] >>= fun () ->
+          Lwt.join [ thread0 ()
+                   ; thread1 ()
+                   ; thread2 ()
+                   ; thread3 ()
+                   ; thread_to_promote ()
+                   ; thread_to_stop (); ]
+          >>= fun () ->
           waiter_writer in
 
         Fmt.epr "Start to do the pass!.\n%!" ;
         final () in
 
-      scan_and_write_threads ()
+      scan_and_write_threads () >>= fun () ->
+      Fmt.epr "Root GC-ed.\n%!" ; Lwt.return ()
 
     let copy_root gc k =
       let k' = P.XNode.of_key k in
