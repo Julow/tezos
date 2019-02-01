@@ -971,6 +971,8 @@ module Make
           Ok (v, x))
 
     let rec safe_to_promote context (uniq : Uniq.t) =
+      Fmt.epr "Promote %d and send it to the ring-buffer.\n%!" (uniq :> int) ;
+
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (uniq :> int) with
       | None ->
@@ -1050,7 +1052,7 @@ module Make
            | true -> write_thread ~signal context ()
            | false ->
                incr_contents context.gc.stats ;
-               promote "whatever" context.gc k' ;
+               promote "node" context.gc k' ;
                write_thread ~signal context ())
       | None ->
           Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
