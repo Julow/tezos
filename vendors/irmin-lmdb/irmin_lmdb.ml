@@ -1016,7 +1016,7 @@ module Make
           | { status= Do_promotion; derivation= k; _ } ->
               ignore @@ Queue.pop context.rd.value ;
               let uniq = Uniq.generate () in
-              Fmt.epr "[%d]: Add node:%d to the table.\n%!" (uniq :> int) thread ;
+              Fmt.epr "[%d]: Add node:%d to the table.\n%!" thread (uniq :> int) ;
               TransTbl.add context.tbl uniq k ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
@@ -1028,7 +1028,7 @@ module Make
         | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
         | None ->
             if !bootstrap
-            then ( Fmt.epr "End of [%d].\n%!" thread ; Lwt_condition.signal signal () ; Lwt.return () )
+            then ( Fmt.epr "End of [%d].\n%!" thread ; Lwt.wakeup signal () ; Lwt.return () )
             else ( bootstrap := true ; go () ) in
       go
 
@@ -1040,7 +1040,7 @@ module Make
       | Some (-1) ->
           Fmt.epr "[wr] Nothing to promote more.\n%!" ;
 
-          Lwt_condition.signal signal () ;
+          Lwt.wakeup signal () ;
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
       | Some uniq ->
@@ -1093,39 +1093,39 @@ module Make
                   ; gc } in
       let context = make_context_from roots in
       let scan_and_write_threads () =
-        let signal_thread0 = Lwt_condition.create () in
-        let signal_thread1 = Lwt_condition.create () in
-        let signal_thread2 = Lwt_condition.create () in
-        let signal_thread3 = Lwt_condition.create () in
-        let signal_to_write = Lwt_condition.create () in
+        let waiter0, signal0 = Lwt.wait () in
+        let waiter1, signal1 = Lwt.wait () in
+        let waiter2, signal2 = Lwt.wait () in
+        let waiter3, signal3 = Lwt.wait () in
+        let waiter_writer, signal_writer = Lwt.wait () in
 
-        let thread0 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:0 ~signal context)) signal_thread0 in
-        let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:1 ~signal context)) signal_thread1 in
-        let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:2 ~signal context)) signal_thread2 in
-        let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:3 ~signal context)) signal_thread3 in
+        let thread0 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:0 ~signal context)) signal0 in
+        let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:1 ~signal context)) signal1 in
+        let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:2 ~signal context)) signal2 in
+        let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~thread:3 ~signal context)) signal3 in
 
         let thread_to_promote () =
           Lwt_preemptive.detach
             (fun signal -> Lwt.async (write_thread ~signal context))
-            signal_to_write in
+            signal_writer in
         let thread_to_stop () =
           Lwt_preemptive.detach
             (fun context ->
                Lwt.async @@ fun () ->
-               Lwt_condition.wait signal_thread0 >>= fun () ->
+               waiter0 >>= fun () ->
                Fmt.epr "Thread 0 terminated.\n%!" ;
-               Lwt_condition.wait signal_thread1 >>= fun () ->
+               waiter1 >>= fun () ->
                Fmt.epr "Thread 1 terminated.\n%!" ;
-               Lwt_condition.wait signal_thread2 >>= fun () ->
+               waiter2 >>= fun () ->
                Fmt.epr "Thread 2 terminated.\n%!" ;
-               Lwt_condition.wait signal_thread3 >>= fun () ->
+               waiter3 >>= fun () ->
                Fmt.epr "Thread 3 terminated.\n%!" ;
                stop_promotion context)
             context in
 
         let final () =
           Lwt.join [ thread0 (); thread1 (); thread2 () ; thread3 (); thread_to_promote (); thread_to_stop (); ] >>= fun () ->
-          Lwt_condition.wait signal_to_write in
+          waiter_writer in
 
         Fmt.epr "Start to do the pass!.\n%!" ;
         final () in
