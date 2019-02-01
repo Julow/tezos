@@ -981,6 +981,7 @@ module Make
                      then
                        ( incr_contents context.gc.stats ;
                          let uniq = Uniq.generate () in
+                         Tbl.add context.gc.tbl k' ;
                          TransTbl.add context.tbl uniq k' ;
                          safe_to_promote context uniq )
                      else Lwt.return () )
