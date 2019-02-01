@@ -1014,7 +1014,7 @@ module Make
           | exception Queue.Empty -> Lwt.return None in
 
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
-        | Some value -> scan context value >>= dispatcher ~thread ~signal context
+        | Some value -> scan context value >>= go
         | None ->
             Lwt.wakeup signal () ; Lwt.return ()
       in go ()
