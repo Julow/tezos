@@ -1013,6 +1013,7 @@ module Make
       go
 
     let rec write_thread ~signal context () =
+      Fmt.epr "Write thread wants the lock.\n%!" ;
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
