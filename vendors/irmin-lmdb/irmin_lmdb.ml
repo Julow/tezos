@@ -1014,7 +1014,10 @@ module Make
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
     let rec dispatcher ~signal context () =
-      let rec consume_to_next_scan () = match Queue.top context.rd.value with
+      let rec consume_to_next_scan () =
+        Fmt.epr "Consume to the next Scan value.\n%!" ;
+
+        match Queue.top context.rd.value with
         | { status= Do_promotion; derivation= k; _ } ->
             let uniq = Uniq.generate () in
             WeakTbl.add context.weak { Value.id= uniq; value= k } ;
@@ -1027,6 +1030,8 @@ module Make
       | None -> Lwt_condition.signal signal () ; Lwt.return ()
 
     let rec write_thread ~signal context () =
+      Fmt.epr "Start to promote an object from the ring-buffer.\n%!" ;
+
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
@@ -1035,7 +1040,7 @@ module Make
           Lwt.return ()
       | Some uniq ->
           let ({ Value.value= k'; _ } as value) = WeakTbl.find context.weak (Value.with_sentinel (Uniq.of_int_exn uniq)) in
-          WeakTbl.remove context.weak value ;
+          WeakTbl.remove context.weak value ; (* not sure. *)
           Lwt_condition.signal context.less () ;
           Lwt_mutex.unlock context.wr.mutex ;
           (match mem context.gc k' with
@@ -1050,6 +1055,8 @@ module Make
           write_thread ~signal context ()
 
     let rec stop_promotion context =
+      Fmt.epr "Waiting to stop promotion process.\n%!" ;
+
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (-1) with
       | None ->
@@ -1089,6 +1096,7 @@ module Make
         let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread1 in
         let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread2 in
         let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread3 in
+
         let thread_to_promote () =
           Lwt_preemptive.detach
             (fun signal -> Lwt.async (write_thread ~signal context))
@@ -1108,6 +1116,7 @@ module Make
           Lwt.join [ thread0 (); thread1 (); thread2 () ; thread3 (); thread_to_promote (); thread_to_stop (); ] >>= fun () ->
           Lwt_condition.wait signal_to_write in
 
+        Fmt.epr "Start to do the pass!.\n%!" ;
         Lwt_preemptive.run_in_main final in
 
       scan_and_write_threads ()
