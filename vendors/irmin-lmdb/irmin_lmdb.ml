@@ -827,7 +827,6 @@ module Make
       val generate : unit -> t
       val equal : t -> t -> bool
       val hash : t -> int
-      val to_int : t -> int
       val of_int_exn : int -> t
     end = struct
       type t = int
@@ -839,7 +838,6 @@ module Make
       let equal a b = (compare : int -> int -> int) a b = 0
 
       let hash x = x
-      let to_int x = x
       let of_int_exn x = if x < 0 then assert false ; x
     end
 
