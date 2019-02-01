@@ -961,8 +961,6 @@ module Make
           Ok (v, x))
 
     let rec safe_to_promote context (uniq : Uniq.t) =
-      Fmt.epr "Promote %d and send it to the ring-buffer.\n%!" (uniq :> int) ;
-
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (uniq :> int) with
       | None ->
@@ -975,8 +973,6 @@ module Make
           Lwt.return ()
 
     let scan context value =
-      Fmt.epr "# scan %a.\n%!" H.pp value.key ;
-
       let k' = P.XNode.of_key value.key in
       match mem context.gc k' with
       | true -> Lwt.return ()
@@ -993,7 +989,6 @@ module Make
                   (fun () ->
                      let uniq = Uniq.generate () in
                      let k' = P.XContents.of_key k in
-                     Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
                      TransTbl.add context.tbl uniq k' ;
                      safe_to_promote context uniq)
             | `Node k ->
@@ -1008,13 +1003,10 @@ module Make
 
     let rec dispatcher ~signal context () =
       let rec consume_to_next_scan () =
-        Fmt.epr "Consume to the next Scan value.\n%!" ;
-
         match Queue.top context.rd.value with
         | { status= Do_promotion; derivation= k; _ } ->
             ignore @@ Queue.pop context.rd.value ;
             let uniq = Uniq.generate () in
-            Fmt.epr "Add %d to the Weak table.\n%!" (uniq :> int) ;
             TransTbl.add context.tbl uniq k ;
             safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
         | to_scan ->
@@ -1027,19 +1019,13 @@ module Make
       | None -> Lwt_condition.signal signal () ; Lwt.return ()
 
     let rec write_thread ~signal context () =
-      Fmt.epr "Start to promote an object from the ring-buffer.\n%!" ;
-
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
-          Fmt.epr "Nothing to promote more.\n%!" ;
-
           Lwt_condition.signal signal () ;
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
       | Some uniq ->
-          Fmt.epr "Promote %d and write it to the next generation.\n%!" uniq ;
-
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ; (* not sure. *)
           Lwt_condition.signal context.less () ;
@@ -1056,8 +1042,6 @@ module Make
           write_thread ~signal context ()
 
     let rec stop_promotion context =
-      Fmt.epr "Waiting to stop promotion process.\n%!" ;
-
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (-1) with
       | None ->
@@ -1116,8 +1100,6 @@ module Make
         let final () =
           Lwt.join [ thread0 (); thread1 (); thread2 () ; thread3 (); thread_to_promote (); thread_to_stop (); ] >>= fun () ->
           Lwt_condition.wait signal_to_write in
-
-        Fmt.epr "Start to do the pass!.\n%!" ;
         final () in
 
       scan_and_write_threads ()
