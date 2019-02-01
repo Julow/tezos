@@ -999,7 +999,7 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let rec dispatcher ~thread ~signal context () =
+    let dispatcher ~thread:_ ~signal context () =
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
