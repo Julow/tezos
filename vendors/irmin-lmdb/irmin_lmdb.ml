@@ -821,6 +821,38 @@ module Make
         let equal x y = String.equal x y
       end)
 
+    module Uniq : sig
+      type t = private int
+
+      val generate : unit -> t
+      val equal : t -> t -> bool
+      val to_int : t -> int
+      val of_int_exn : int -> t
+    end = struct
+      type t = int
+
+      let generate =
+        let idx = ref (-1) in
+        fun () -> let res = !idx in incr idx ; res
+
+      let equal a b = (compare : int -> int -> int) a b = 0
+
+      let to_int x = x
+      let of_int_exn x = if x < 0 then assert false ; x
+    end
+
+    module Value = struct
+      type t = { id : Uniq.t; value : string }
+      let hash { id; _ } = Uniq.to_int id
+      let equal { id= a; _ } { id= b; _ } = Uniq.equal a b
+
+      let with_sentinel =
+        let sentinel = "\xF0\x0D\xBA\xB1" in
+        fun uniq -> { id= uniq; value= sentinel }
+    end
+
+    module WeakTbl = Weak.Make(Value)
+
     type t = {
       tbl   : Tbl.t;
       new_db: P.Contents.t;
@@ -919,17 +951,17 @@ module Make
 
     type status =
       | Do_scan (* `Gray *) | Do_promotion (* `Black *)
-    type action =
-      | Promote_and_continue_with of string * Cstruct.t option | Stop
-    and value = { key : H.t; derivation : string * Cstruct.t option;
+    and value = { key : H.t; derivation : string;
                   status : status ; depth : int }
     and rd_queue = value Queue.t
-    and wr_queue = action Queue.t
+    and wr_queue = (int, Bigarray.int_elt) Ke.Rke.Weighted.t
     and 'a protected = { (* mutable *) value : 'a; mutex : Lwt_mutex.t }
     and context =
       { rd : rd_queue protected
       ; wr : wr_queue protected
-      ; wc : unit Lwt_condition.t
+      ; weak : WeakTbl.t
+      ; more : unit Lwt_condition.t
+      ; less : unit Lwt_condition.t
       ; gc : t }
 
     let xnode_find_v db key =
@@ -938,60 +970,101 @@ module Make
           P.XNode.to_value v |>> fun x ->
           Ok (v, x))
 
-    let scan t value =
+    let rec safe_to_promote context (uniq : Uniq.t) =
+      Lwt_mutex.lock context.wr.mutex >>= fun () ->
+      match Ke.Rke.Weighted.push context.wr.value (uniq :> int) with
+      | None ->
+          Lwt_condition.wait ~mutex:context.wr.mutex context.less >>= fun () ->
+          Lwt_mutex.unlock context.wr.mutex ;
+          safe_to_promote context uniq
+      | Some () ->
+          Lwt_condition.signal context.more () ;
+          Lwt_mutex.unlock context.wr.mutex ;
+          Lwt.return ()
+
+    let scan context value =
       Fmt.epr "# scan %a.\n%!" H.pp value.key ;
 
       let k' = P.XNode.of_key value.key in
-      if mem t.gc k' then ()
-      else (
-        Tbl.add t.gc.tbl k' ;
-        xnode_find_v t.gc.old_db value.key |> Option.get |> fun (buf, v) ->
+      match mem context.gc k' with
+      | true -> assert false
+      | false ->
+        Tbl.add context.gc.tbl k' ;
+        xnode_find_v context.gc.old_db value.key |> Option.get |> fun (_, v) ->
         let children = P.Node.Val.list v in
-        incr_nodes t.gc.stats ;
-        update_width t.gc.stats children ;
-        update_depth t.gc.stats value.depth ;
-        List.iter (fun (_, c) -> match c with
+        incr_nodes context.gc.stats ;
+        update_width context.gc.stats children ;
+        update_depth context.gc.stats value.depth ;
+        Lwt_list.iter_p (fun (_, c) -> match c with
             | `Contents (k, _) ->
-                let k' = P.XContents.of_key k in
-                Queue.push (Promote_and_continue_with (k', Some buf)) t.wr.value ;
-                Lwt_condition.signal t.wc ()
+                Lwt_mutex.with_lock context.rd.mutex
+                  (fun () ->
+                     let uniq = Uniq.generate () in
+                     let k' = P.XContents.of_key k in
+                     WeakTbl.add context.weak { Value.id= uniq; value= k' } ;
+                     safe_to_promote context uniq)
             | `Node k ->
-                let k' = P.XNode.of_key k in
-                Queue.push { key=k; derivation= (k', Some buf); status= Do_scan; depth= value.depth + 1 } t.rd.value )
-          children ;
-        Queue.push { value with status= Do_promotion } t.rd.value
-      )
+                Lwt_mutex.with_lock context.rd.mutex
+                  (fun () ->
+                     let k' = P.XNode.of_key k in
+                     Queue.push { key=k; derivation= k'; status= Do_scan; depth= value.depth + 1 } context.rd.value ;
+                     Lwt.return ()))
+          children >>= fun () ->
+        Lwt_mutex.with_lock context.rd.mutex
+          (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let rec dispatcher context =
-      try
-        while (Queue.top context.rd.value).status = Do_promotion
-        do let { derivation = k, buf; _ } = Queue.pop context.rd.value in
-          Queue.push (Promote_and_continue_with (k, buf)) context.wr.value;
-        done ;
-        let value = Queue.pop context.rd.value in
-        Lwt_condition.signal context.wc () ;
-        scan context value ;
-        dispatcher context
-      with Queue.Empty ->
-        Lwt_condition.signal context.wc ()
+    let rec dispatcher ~signal context () =
+      let rec consume_to_next_scan () = match Queue.top context.rd.value with
+        | { status= Do_promotion; derivation= k; _ } ->
+            let uniq = Uniq.generate () in
+            WeakTbl.add context.weak { Value.id= uniq; value= k } ;
+            safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
+        | to_scan -> Lwt.return (Some to_scan)
+        | exception Queue.Empty -> Lwt.return None in
 
-    let rec write_thread context =
-      match Queue.pop context.wr.value with
-      | Stop ->
-          Lwt_mutex.unlock context.wr.mutex
-      | Promote_and_continue_with (k', buf) ->
+      Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
+      | Some value -> scan context value >>= dispatcher ~signal context
+      | None -> Lwt_condition.signal signal () ; Lwt.return ()
+
+    let rec write_thread ~signal context () =
+      Lwt_mutex.lock context.wr.mutex >>= fun () ->
+      match Ke.Rke.Weighted.pop context.wr.value with
+      | Some (-1) ->
+          Lwt_condition.signal signal () ;
           Lwt_mutex.unlock context.wr.mutex ;
-          if mem context.gc k' then ()
-          else (
-            incr_contents context.gc.stats;
-            promote "whatever" context.gc k' ?old:buf
-          )
-      | exception Queue.Empty -> write_thread context
+          Lwt.return ()
+      | Some uniq ->
+          let ({ Value.value= k'; _ } as value) = WeakTbl.find context.weak (Value.with_sentinel (Uniq.of_int_exn uniq)) in
+          WeakTbl.remove context.weak value ;
+          Lwt_condition.signal context.less () ;
+          Lwt_mutex.unlock context.wr.mutex ;
+          (match mem context.gc k' with
+           | true -> write_thread ~signal context ()
+           | false ->
+               incr_contents context.gc.stats ;
+               promote "whatever" context.gc k' ;
+               write_thread ~signal context ())
+      | None ->
+          Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
+          Lwt_mutex.unlock context.wr.mutex ;
+          write_thread ~signal context ()
+
+    let rec stop_promotion context =
+      Lwt_mutex.lock context.wr.mutex >>= fun () ->
+      match Ke.Rke.Weighted.push context.wr.value (-1) with
+      | None ->
+          Lwt_condition.wait ~mutex:context.wr.mutex context.less >>= fun () ->
+          Lwt_mutex.unlock context.wr.mutex ;
+          stop_promotion context
+      | Some () ->
+          Lwt_condition.signal context.more () ;
+          Lwt_mutex.unlock context.wr.mutex ;
+          Lwt.return ()
 
     let pass gc roots =
       let make_context_from roots =
         let rd_queue = Queue.create () in
-        let wr_queue = Queue.create () in
+        let wr_queue, _ = Ke.Rke.Weighted.create ~capacity:0x100 Bigarray.Int in
 
         let rec go = function
           | [] -> ()
@@ -1000,23 +1073,50 @@ module Make
               go roots in
         go roots; { rd= { value= rd_queue; mutex= Lwt_mutex.create () }
                   ; wr= { value= wr_queue; mutex= Lwt_mutex.create () }
-                  ; wc = Lwt_condition.create ()
+                  ; less = Lwt_condition.create ()
+                  ; more = Lwt_condition.create ()
+                  ; weak = WeakTbl.create 0x100
                   ; gc } in
       let context = make_context_from roots in
-      let scan_threads () =
-          dispatcher context ;
-          dispatcher context ;
-          dispatcher context ;
-          dispatcher context ;
-          Queue.push Stop context.wr.value in
-      scan_threads () ;
-      write_thread context
+      let scan_and_write_threads () =
+        let signal_thread0 = Lwt_condition.create () in
+        let signal_thread1 = Lwt_condition.create () in
+        let signal_thread2 = Lwt_condition.create () in
+        let signal_thread3 = Lwt_condition.create () in
+        let signal_to_write = Lwt_condition.create () in
+
+        let thread0 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread0 in
+        let thread1 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread1 in
+        let thread2 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread2 in
+        let thread3 () = Lwt_preemptive.detach (fun signal -> Lwt.async (dispatcher ~signal context)) signal_thread3 in
+        let thread_to_promote () =
+          Lwt_preemptive.detach
+            (fun signal -> Lwt.async (write_thread ~signal context))
+            signal_to_write in
+        let thread_to_stop () =
+          Lwt_preemptive.detach
+            (fun context ->
+               Lwt.async @@ fun () ->
+               Lwt_condition.wait signal_thread0 >>= fun () ->
+               Lwt_condition.wait signal_thread1 >>= fun () ->
+               Lwt_condition.wait signal_thread2 >>= fun () ->
+               Lwt_condition.wait signal_thread3 >>= fun () ->
+               stop_promotion context)
+            context in
+
+        let final () =
+          Lwt.join [ thread0 (); thread1 (); thread2 () ; thread3 (); thread_to_promote (); thread_to_stop (); ] >>= fun () ->
+          Lwt_condition.wait signal_to_write in
+
+        Lwt_preemptive.run_in_main final in
+
+      scan_and_write_threads ()
 
     let copy_root gc k =
       let k' = P.XNode.of_key k in
       if mem gc k' then ()
       else (
-        pass gc [ k, (k', None) ] ;
+        pass gc [ k, k' ] ;
         promote "root" gc k'
       )
 
