@@ -926,12 +926,14 @@ module Make
 
     let promote msg t ?old k =
       print_message t;
+      Fmt.epr "Promote %a.\n%!" H.pp (H.of_raw (Cstruct.of_string k)) ;
       (match old with
        | Some _ -> old
        | None   -> raw_find t.old_db k (fun x -> Ok x))
       |> function
       | Some v ->
-          if is_node k then raw_add t.new_db k( upgrade_node t v)
+          if is_node k
+          then raw_add t.new_db k( upgrade_node t v)
           else promote_val t k v
       | None   ->
           let k = H.of_raw (Cstruct.of_string k) in
