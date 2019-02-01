@@ -978,7 +978,7 @@ module Make
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        xnode_find_v context.gc.old_db value.key |> Option.get |> fun (_, v) ->
+        P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
         update_width context.gc.stats children ;
