@@ -49,7 +49,7 @@ let export ?(export_rolling=false) data_dir filename blocks =
     else
       Store.Chain_data.Current_head.read_exn chain_data_store >>= fun head ->
       Store.Block.Predecessors.read_exn (block_store, head) 6 >>= fun sixteenth_pred ->
-      lwt_log_notice "No blocks specified, using %a (64th predecessor from the current head)"
+      lwt_log_notice "No block hash specified with the `--block` option. Using %a by default (64th predecessor from the current head)"
         Block_hash.pp sixteenth_pred >>= fun () ->
       Lwt.return [ sixteenth_pred ]
   end >>= fun blocks ->
