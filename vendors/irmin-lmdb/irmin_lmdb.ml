@@ -967,7 +967,7 @@ module Make
           Lwt.return ()
 
     let scan context value =
-      let k' = P.XNode.of_key value.key in
+      let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
       | false ->
