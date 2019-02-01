@@ -954,12 +954,6 @@ module Make
       ; less : unit Lwt_condition.t
       ; gc : t }
 
-    let xnode_find_v db key =
-      raw_find db (P.XNode.of_key key)
-        (fun v ->
-          P.XNode.to_value v |>> fun x ->
-          Ok (v, x))
-
     let rec safe_to_promote context (uniq : Uniq.t) =
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (uniq :> int) with
@@ -978,7 +972,7 @@ module Make
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        xnode_find_v context.gc.old_db value.key |> Option.get |> fun (_, v) ->
+        P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
         update_width context.gc.stats children ;
@@ -1121,7 +1115,8 @@ module Make
     let copy_root gc k =
       P.XNode.find_v gc.old_db k >|= Option.get >>= fun (buf, _) ->
       let k' = P.XNode.of_key k in
-      if mem gc k' then Lwt.return ()
+      if mem gc k'
+      then Lwt.return ()
       else
         pass gc [ k, k' ] >|= fun () -> promote "root" gc k' ~old:buf
 
