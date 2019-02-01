@@ -1014,7 +1014,10 @@ module Make
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
     let rec dispatcher ~signal context () =
-      let rec consume_to_next_scan () = match Queue.top context.rd.value with
+      let rec consume_to_next_scan () =
+        Fmt.epr "Consume to the next Scan value.\n%!" ;
+
+        match Queue.top context.rd.value with
         | { status= Do_promotion; derivation= k; _ } ->
             let uniq = Uniq.generate () in
             WeakTbl.add context.weak { Value.id= uniq; value= k } ;
@@ -1035,7 +1038,7 @@ module Make
           Lwt.return ()
       | Some uniq ->
           let ({ Value.value= k'; _ } as value) = WeakTbl.find context.weak (Value.with_sentinel (Uniq.of_int_exn uniq)) in
-          WeakTbl.remove context.weak value ;
+          WeakTbl.remove context.weak value ; (* not sure. *)
           Lwt_condition.signal context.less () ;
           Lwt_mutex.unlock context.wr.mutex ;
           (match mem context.gc k' with
