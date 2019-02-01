@@ -960,11 +960,7 @@ module Make
           P.XNode.to_value v |>> fun x ->
           Ok (v, x))
 
-    let fmt_epr fmt = Fmt.kstrf ignore fmt
-
     let rec safe_to_promote context (uniq : Uniq.t) =
-      fmt_epr "Promote %d and send it to the ring-buffer.\n%!" (uniq :> int) ;
-
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (uniq :> int) with
       | None ->
@@ -976,9 +972,7 @@ module Make
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
 
-    let scan ~thread context value =
-      fmt_epr "[%d]: Scan %a.\n%!" thread H.pp value.key ;
-
+    let scan context value =
       let k' = P.XNode.of_key value.key in
       match mem context.gc k' with
       | true -> Lwt.return ()
@@ -995,7 +989,6 @@ module Make
                   (fun () ->
                      let uniq = Uniq.generate () in
                      let k' = P.XContents.of_key k in
-                     fmt_epr "[%d] Add contents:%d to the table.\n%!" thread (uniq :> int) ;
                      TransTbl.add context.tbl uniq k' ;
                      safe_to_promote context uniq)
             | `Node k ->
@@ -1012,13 +1005,10 @@ module Make
       let bootstrap = ref false in
       let rec go () =
         let rec consume_to_next_scan () =
-          fmt_epr "[%d]: Consume to the next Scan value.\n%!" thread ;
-
           match Queue.top context.rd.value with
           | { status= Do_promotion; derivation= k; _ } ->
               ignore @@ Queue.pop context.rd.value ;
               let uniq = Uniq.generate () in
-              fmt_epr "[%d]: Add node:%d to the table.\n%!" thread (uniq :> int) ;
               TransTbl.add context.tbl uniq k ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
@@ -1027,40 +1017,31 @@ module Make
           | exception Queue.Empty -> Lwt.return None in
 
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
-        | Some value -> scan ~thread context value >>= dispatcher ~thread ~signal context
+        | Some value -> scan context value >>= dispatcher ~thread ~signal context
         | None ->
             if !bootstrap
-            then ( fmt_epr "End of [%d].\n%!" thread ; Lwt.wakeup signal () ; Lwt.return () )
+            then ( Lwt.wakeup signal () ; Lwt.return () )
             else ( bootstrap := true ; Lwt_unix.sleep 1. >>= go ) in
       go
 
     let rec write_thread ~signal context () =
-      fmt_epr "[wr] Start to promote an object from the ring-buffer.\n%!" ;
-
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
-          fmt_epr "[wr] Nothing to promote more.\n%!" ;
-
           Lwt.wakeup signal () ;
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
       | Some uniq ->
-          fmt_epr "[wr] Promote %d and write it to the next generation.\n%!" uniq ;
-
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ; (* not sure. *)
           Lwt_condition.signal context.less () ;
           Lwt_mutex.unlock context.wr.mutex ;
           (match mem context.gc k' with
            | true ->
-               fmt_epr "[wr] %d already promoted.\n%!" uniq ;
                write_thread ~signal context ()
            | false ->
-               fmt_epr "[wr] %d will be promoted correctly.\n%!" uniq ;
                incr_contents context.gc.stats ;
                promote "node" context.gc k' ;
-               fmt_epr "[wr] %d promoted correctly.\n%!" uniq ;
                write_thread ~signal context ())
       | None ->
           Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
@@ -1068,8 +1049,6 @@ module Make
           write_thread ~signal context ()
 
     let rec stop_promotion context =
-      fmt_epr "[stp] Waiting to stop promotion process.\n%!" ;
-
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.push context.wr.value (-1) with
       | None ->
@@ -1119,13 +1098,9 @@ module Make
             (fun context ->
                Lwt.async @@ fun () ->
                waiter0 >>= fun () ->
-               fmt_epr "Thread 0 terminated.\n%!" ;
                waiter1 >>= fun () ->
-               fmt_epr "Thread 1 terminated.\n%!" ;
                waiter2 >>= fun () ->
-               fmt_epr "Thread 2 terminated.\n%!" ;
                waiter3 >>= fun () ->
-               fmt_epr "Thread 3 terminated.\n%!" ;
                stop_promotion context)
             context in
 
@@ -1139,11 +1114,9 @@ module Make
           >>= fun () ->
           waiter_writer in
 
-        fmt_epr "Start to do the pass!.\n%!" ;
         final () in
 
-      scan_and_write_threads () >>= fun () ->
-      fmt_epr "Root GC-ed.\n%!" ; Lwt.return ()
+      scan_and_write_threads ()
 
     let copy_root gc k =
       let k' = P.XNode.of_key k in
