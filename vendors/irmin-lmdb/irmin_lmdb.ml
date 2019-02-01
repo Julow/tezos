@@ -815,8 +815,6 @@ module Make
 
     external get_64: string -> int -> int64 = "%caml_string_get64u"
 
-    type kind = Node | Contents
-
     module Tbl = Hashset.Make(struct
         type t = string
         let hash c = Int64.to_int (get_64 c (String.length c - 8))
