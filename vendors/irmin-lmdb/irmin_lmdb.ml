@@ -975,7 +975,7 @@ module Make
         incr_nodes context.gc.stats ;
         update_width context.gc.stats children ;
         update_depth context.gc.stats value.depth ;
-        Lwt_list.iter_p (fun (_, c) -> match c with
+        Lwt_list.iter_s (fun (_, c) -> match c with
             | `Contents (k, _) ->
                 Lwt_mutex.with_lock context.rd.mutex
                   (fun () ->
