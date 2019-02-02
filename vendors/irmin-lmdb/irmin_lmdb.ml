@@ -964,18 +964,19 @@ module Make
     [@@@warning "+32"]
 
     let scan context value =
+      Fmt.epr "Scan %a.\n%!" H.pp value.key ;
+
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        Fmt.epr "Scan %a.\n%!" H.pp value.key ;
         P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
         update_width context.gc.stats children ;
         update_depth context.gc.stats value.depth ;
-        Lwt_list.iter_s (fun (_, c) -> match c with
+        Lwt_list.iter_p (fun (_, c) -> match c with
             | `Contents (k, _) ->
                 Lwt_mutex.with_lock context.rd.mutex
                   (fun () ->
@@ -1001,6 +1002,7 @@ module Make
 
     let dispatcher ~thread ~signal context () =
       Fmt.epr "Start thread %d to scan.\n%!" thread ;
+
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
@@ -1021,7 +1023,6 @@ module Make
       in go ()
 
     let rec bootstrap ~thread ~signal context () =
-      (* mutex? *)
       Lwt_mutex.with_lock context.rd.mutex (fun () -> Lwt.return (Queue.is_empty context.rd.value)) >>= fun res ->
       if res
       then bootstrap ~thread ~signal context ()
