@@ -969,7 +969,7 @@ module Make
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        Fmt.kstrf ignore "Scan %a.\n%!" H.pp value.key ;
+        Fmt.epr "Scan %a.\n%!" H.pp value.key ;
         P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
