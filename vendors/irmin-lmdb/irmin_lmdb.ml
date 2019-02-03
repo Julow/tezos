@@ -1009,11 +1009,12 @@ module Make
               Fmt.pr "[%d] Promote uniq:%d.\n%!" thread (uniq :> int) ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
+              Fmt.pr "[%d] Start to scan.\n%!" thread ;
               ignore @@ Queue.pop context.rd.value ;
               Lwt.return (Some to_scan)
           | exception Queue.Empty -> Lwt.return None in
 
-        Fmt.pr "context.rd.mutex is locket: %b.\n%!" (Lwt_mutex.is_locked context.rd.mutex) ;
+        Fmt.pr "context.rd.mutex is locked: %b.\n%!" (Lwt_mutex.is_locked context.rd.mutex) ;
 
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
         | Some value -> scan context value >>= go
