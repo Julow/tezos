@@ -960,6 +960,8 @@ module Make
       Ok (v, x)
 
     let scan context value =
+      Fmt.pr "Scan %a.\n%!" H.pp value.key ;
+
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
