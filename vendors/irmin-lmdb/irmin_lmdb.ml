@@ -905,7 +905,7 @@ module Make
       if current_time -. !last_time > 5. (* print something every 5s *)
       then (
         last_time := current_time;
-        Fmt.pr "GC: %d min elapsed - %a\n%!"
+        Fmt.epr "GC: %d min elapsed - %a\n%!"
           (int_of_float ((!last_time -. Lazy.force init_time) /. 60.))
           pp_stats t.stats;
       )
@@ -960,7 +960,7 @@ module Make
       Ok (v, x)
 
     let scan context value =
-      Fmt.kstrf ignore "Scan %a.\n%!" H.pp value.key ;
+      Fmt.pr "Scan %a.\n%!" H.pp value.key ;
 
       let k' = value.derivation in
       match mem context.gc k' with
@@ -997,7 +997,7 @@ module Make
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
     let dispatcher ~thread ~signal context () =
-      Fmt.kstrf ignore "Start thread %d to scan.\n%!" thread ;
+      Fmt.pr "Start thread %d to scan.\n%!" thread ;
 
       let rec go () =
         let rec consume_to_next_scan () =
