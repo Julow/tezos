@@ -964,14 +964,12 @@ module Make
     [@@@warning "+32"]
 
     let scan context value =
-      Fmt.epr "Scan %a.\n%!" H.pp value.key ;
-
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
+        xnode_find_v context.gc.old_db value.key |> Option.get |> fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
         update_width context.gc.stats children ;
@@ -1000,9 +998,7 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let dispatcher ~thread ~signal context () =
-      Fmt.epr "Start thread %d to scan.\n%!" thread ;
-
+    let dispatcher ~thread:_ ~signal context () =
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
