@@ -1006,6 +1006,7 @@ module Make
               ignore @@ Queue.pop context.rd.value ;
               let uniq = Uniq.generate () in
               TransTbl.add context.tbl uniq k ;
+              Fmt.epr "[%d] Promote %d.\n%!" thread (uniq :> int) ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
               ignore @@ Queue.pop context.rd.value ;
