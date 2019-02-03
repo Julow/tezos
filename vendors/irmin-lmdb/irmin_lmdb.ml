@@ -905,7 +905,7 @@ module Make
       if current_time -. !last_time > 5. (* print something every 5s *)
       then (
         last_time := current_time;
-        Fmt.pr "GC: %d min elapsed - %a\n%!"
+        Fmt.epr "GC: %d min elapsed - %a\n%!"
           (int_of_float ((!last_time -. Lazy.force init_time) /. 60.))
           pp_stats t.stats;
       )
@@ -954,16 +954,14 @@ module Make
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
 
-    [@@@warning "-32"]
-
     let xnode_find_v db key =
       raw_find db (P.XNode.of_key key) @@ fun v ->
       P.XNode.to_value v |>> fun x ->
       Ok (v, x)
 
-    [@@@warning "+32"]
-
     let scan context value =
+      Fmt.pr "Scan %a.\n%!" H.pp value.key ;
+
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
@@ -998,7 +996,9 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let dispatcher ~thread:_ ~signal context () =
+    let dispatcher ~thread ~signal context () =
+      Fmt.pr "Start thread %d to scan.\n%!" thread ;
+
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
@@ -1006,6 +1006,7 @@ module Make
               ignore @@ Queue.pop context.rd.value ;
               let uniq = Uniq.generate () in
               TransTbl.add context.tbl uniq k ;
+              Fmt.epr "[%d] Promote %d.\n%!" thread (uniq :> int) ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
               ignore @@ Queue.pop context.rd.value ;
