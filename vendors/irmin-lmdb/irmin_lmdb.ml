@@ -1006,16 +1006,20 @@ module Make
               ignore @@ Queue.pop context.rd.value ;
               let uniq = Uniq.generate () in
               TransTbl.add context.tbl uniq k ;
-              Fmt.epr "[%d] Promote %d.\n%!" thread (uniq :> int) ;
+              Fmt.pr "[%d] Promote uniq:%d.\n%!" thread (uniq :> int) ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
+              Fmt.pr "[%d] Start to scan.\n%!" thread ;
               ignore @@ Queue.pop context.rd.value ;
               Lwt.return (Some to_scan)
           | exception Queue.Empty -> Lwt.return None in
 
+        Fmt.pr "context.rd.mutex is locked: %b.\n%!" (Lwt_mutex.is_locked context.rd.mutex) ;
+
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
         | Some value -> scan context value >>= go
         | None ->
+            Fmt.pr "Stop thread %d.\n%!" thread ;
             Lwt.wakeup signal () ; Lwt.return ()
       in go ()
 
@@ -1126,6 +1130,7 @@ module Make
         pass gc [ k, k' ] >>= fun () -> promote "root" gc k' ~old:buf
 
     let copy_commit gc k =
+      Fmt.epr "Start to copy commit: %a.\n%!" H.pp k ;
       Lwt_switch.check gc.switch;
       P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (buf, v) ->
       let k' = P.XCommit.of_key k in
