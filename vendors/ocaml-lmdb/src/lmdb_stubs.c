@@ -343,9 +343,8 @@ CAMLprim value stub_mdb_get(value txn, value dbi, value key) {
     k.mv_size = caml_string_length(key);
     k.mv_data = String_val(key);
 
-    caml_release_runtime_system();
     ret = mdb_get(Txn_val(txn), Nativeint_val(dbi), &k, &v);
-    caml_acquire_runtime_system();
+
     if (ret) {
         result = caml_alloc(1, 1);
         Store_field(result, 0, Val_int(ret));
