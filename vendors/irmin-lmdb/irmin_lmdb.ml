@@ -1124,6 +1124,7 @@ module Make
         pass gc [ k, k' ] >>= fun () -> promote "root" gc k' ~old:buf
 
     let copy_commit gc k =
+      Fmt.epr "Start to copy commit: %a.\n%!" H.pp k ;
       Lwt_switch.check gc.switch;
       P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (buf, v) ->
       let k' = P.XCommit.of_key k in
