@@ -1020,8 +1020,7 @@ module Make
       in go ()
 
     let rec bootstrap ~thread ~signal context () =
-      Lwt_mutex.with_lock context.rd.mutex (fun () -> Lwt.return (Queue.is_empty context.rd.value)) >>= fun res ->
-      if res
+      if Queue.is_empty context.rd.value
       then bootstrap ~thread ~signal context ()
       else dispatcher ~thread ~signal context ()
 
