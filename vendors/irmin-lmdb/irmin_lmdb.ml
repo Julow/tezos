@@ -960,8 +960,6 @@ module Make
       Ok (v, x)
 
     let scan context value =
-      Fmt.pr "Scan %a.\n%!" H.pp value.key ;
-
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
@@ -996,9 +994,7 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let dispatcher ~thread ~signal context () =
-      Fmt.pr "Start thread %d to scan.\n%!" thread ;
-
+    let dispatcher ~thread:_ ~signal context () =
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
@@ -1006,24 +1002,19 @@ module Make
               ignore @@ Queue.pop context.rd.value ;
               let uniq = Uniq.generate () in
               TransTbl.add context.tbl uniq k ;
-              Fmt.pr "[%d] Promote uniq:%d.\n%!" thread (uniq :> int) ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
-              Fmt.pr "[%d] Start to scan.\n%!" thread ;
               ignore @@ Queue.pop context.rd.value ;
               Lwt.return (Some to_scan)
           | exception Queue.Empty -> Lwt.return None in
 
-        Fmt.pr "context.rd.mutex is locked: %b.\n%!" (Lwt_mutex.is_locked context.rd.mutex) ;
-
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
         | Some value -> scan context value >>= go
         | None ->
-            Fmt.pr "Stop thread %d.\n%!" thread ;
             Lwt.wakeup signal () ; Lwt.return ()
       in go ()
 
-    let rec bootstrap ~thread ~signal context () =
+    let bootstrap ~thread ~signal context () =
       dispatcher ~thread ~signal context ()
 
     let rec write_thread ~signal context () =
@@ -1128,7 +1119,6 @@ module Make
         pass gc [ k, k' ] >>= fun () -> promote "root" gc k' ~old:buf
 
     let copy_commit gc k =
-      Fmt.epr "Start to copy commit: %a.\n%!" H.pp k ;
       Lwt_switch.check gc.switch;
       P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (buf, v) ->
       let k' = P.XCommit.of_key k in
