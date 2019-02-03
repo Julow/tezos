@@ -1013,6 +1013,8 @@ module Make
               Lwt.return (Some to_scan)
           | exception Queue.Empty -> Lwt.return None in
 
+        Fmt.pr "context.rd.mutex is locket: %b.\n%!" (Lwt_mutex.is_locked context.rd.mutex) ;
+
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
         | Some value -> scan context value >>= go
         | None ->
