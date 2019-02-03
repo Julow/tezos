@@ -954,16 +954,14 @@ module Make
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
 
-    [@@@warning "-32"]
-
     let xnode_find_v db key =
       raw_find db (P.XNode.of_key key) @@ fun v ->
       P.XNode.to_value v |>> fun x ->
       Ok (v, x)
 
-    [@@@warning "+32"]
-
     let scan context value =
+      Fmt.kstrf ignore "Scan %a.\n%!" H.pp value.key ;
+
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
@@ -998,7 +996,9 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex
           (fun () -> Queue.push { value with status= Do_promotion } context.rd.value ; Lwt.return ())
 
-    let dispatcher ~thread:_ ~signal context () =
+    let dispatcher ~thread ~signal context () =
+      Fmt.kstrf ignore "Start thread %d to scan.\n%!" thread ;
+
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
