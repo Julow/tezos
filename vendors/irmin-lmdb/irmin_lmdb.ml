@@ -1023,7 +1023,7 @@ module Make
             Lwt.wakeup signal () ; Lwt.return ()
       in go ()
 
-    let rec bootstrap ~thread ~signal context () =
+    let bootstrap ~thread ~signal context () =
       dispatcher ~thread ~signal context ()
 
     let rec write_thread ~signal context () =
