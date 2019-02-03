@@ -960,8 +960,6 @@ module Make
       Ok (v, x)
 
     let scan context value =
-      Fmt.pr "Scan %a.\n%!" H.pp value.key ;
-
       let k' = value.derivation in
       match mem context.gc k' with
       | true -> Lwt.return ()
@@ -1006,7 +1004,6 @@ module Make
               ignore @@ Queue.pop context.rd.value ;
               let uniq = Uniq.generate () in
               TransTbl.add context.tbl uniq k ;
-              Fmt.epr "[%d] Promote %d.\n%!" thread (uniq :> int) ;
               safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
           | to_scan ->
               ignore @@ Queue.pop context.rd.value ;
@@ -1016,6 +1013,7 @@ module Make
         Lwt_mutex.with_lock context.rd.mutex consume_to_next_scan >>= function
         | Some value -> scan context value >>= go
         | None ->
+            Fmt.pr "Stope thread %d.\n%!" thread ;
             Lwt.wakeup signal () ; Lwt.return ()
       in go ()
 
