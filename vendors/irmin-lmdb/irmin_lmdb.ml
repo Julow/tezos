@@ -49,6 +49,7 @@ type t = {
 let of_result op = function
   | Ok v      -> Lwt.return v
   | Error err ->
+      Fmt.epr "%s: %d.\n%!" op (Obj.magic err) ;
       Fmt.epr "%s: %a.\n%!" op Lmdb.pp_error err ;
       Fmt.kstrf Lwt.fail_with "%s: %a" op Lmdb.pp_error err
 
