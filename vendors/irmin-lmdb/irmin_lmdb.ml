@@ -221,8 +221,7 @@ module Raw = struct
      | None -> Ok ()
      | Some (t, _ddb) ->
          let res0 = Lmdb.commit_txn t in
-         let () = Lmdb.abort_txn t in
-         db.wtxn <- None ;
+         (* db.wtxn <- None ; *)
          res0 )
     |> of_result op
 
