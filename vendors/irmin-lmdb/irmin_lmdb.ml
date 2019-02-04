@@ -49,7 +49,6 @@ type t = {
 let of_result op = function
   | Ok v      -> Lwt.return v
   | Error err ->
-      Fmt.epr "%s: %a.\n%!" op Lmdb.pp_error err ;
       Fmt.kstrf Lwt.fail_with "%s: %a" op Lmdb.pp_error err
 
 let (|>>) v f =
@@ -61,11 +60,8 @@ let get_wtxn db =
   match db.wtxn with
   | Some t -> Ok t
   | None ->
-      Fmt.epr "create_rw_txn.\n%!" ;
       Lmdb.create_rw_txn db.db |>> fun txn ->
-      Fmt.epr "create_rw_txn: finished.\n%!" ;
       Lmdb.opendb txn |>> fun ddb ->
-      Fmt.epr "create_rw_txn & opendb: finished.\n%!" ;
       db.wtxn <- Some (txn, ddb);
       Ok (txn, ddb)
 
@@ -200,22 +196,20 @@ module Raw = struct
 
   let add_string db k v =
     (get_wtxn db |>> fun (txn, ddb) ->
-            let res = Lmdb.put_string txn ddb k v in Fmt.epr "Lmdb.put finished.\n%!" ; res)
+            Lmdb.put_string txn ddb k v)
     |> of_result "add_string"
 
   let add_cstruct db k v =
     (get_wtxn db |>> fun (txn, ddb) ->
-            let res = Lmdb.put txn ddb k (Cstruct.to_bigarray v) in Fmt.epr "Lmdb.put finished.\n%!" ; res )
+            Lmdb.put txn ddb k (Cstruct.to_bigarray v))
     |> of_result "add_ba"
 
   let add db k v =
-    Fmt.epr "Process Raw.add.\n%!" ;
     match v with
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
 
   let remove db k =
-    Fmt.epr "Process Raw.remove.\n%!" ;
     (get_wtxn db |>> fun (txn, ddb) ->
      match Lmdb.del txn ddb k with
      | Ok () | Error Lmdb.KeyNotFound -> Ok ()
@@ -223,19 +217,16 @@ module Raw = struct
     |> of_result "remove"
 
   let commit op db =
-    Fmt.epr "Process Raw.commit.\n%!" ;
     (match db.wtxn with
      | None -> Ok ()
      | Some (t, _ddb) ->
          let res0 = Lmdb.commit_txn t in
          let () = Lmdb.abort_txn t in
-         Fmt.epr "Database committed.\n%!" ;
          db.wtxn <- None ;
          res0 )
     |> of_result op
 
   let fsync db =
-    Fmt.epr "Process Raw.fsync.\n%!" ;
     Lmdb.sync ~force:true db.db
     |> of_result "fsync"
 
@@ -269,7 +260,6 @@ module AO (K: Irmin.Hash.S) (V: Irmin.Contents.S0) (Conv: sig
   let add db v =
     let k = Conv.digest v in
     let v = Conv.of_value v in
-    Fmt.epr "Write in other side.\n%!" ;
     Raw.add db (Conv.of_key k) v >|= fun () ->
     k
 
@@ -630,7 +620,6 @@ module Irmin_value_store
       end)
 
     let add db v =
-      Fmt.epr "Write and commit in other side.\n%!" ;
       add db v >>= fun k ->
       Raw.commit "Commit.add" db >|= fun () ->
       k
@@ -715,14 +704,12 @@ module Irmin_branch_store (B: Branch) (H: Irmin.Hash.S) = struct
   let set_unsafe t r k =
     let r = lmdb_of_branch r in
     let k = lmdb_of_hash k in
-    Fmt.epr "Write in other side!\n%!" ;
     Raw.add_cstruct t.db r k
 
   let set t r k =
     Log.debug (fun f -> f "set %a" B.pp r);
     L.with_lock t.l r @@ fun () ->
     set_unsafe t r k >>= fun () ->
-    Fmt.epr "Write in other side!\n%!" ;
     Raw.commit "set" t.db
 
   let remove_unsafe t r =
@@ -733,7 +720,6 @@ module Irmin_branch_store (B: Branch) (H: Irmin.Hash.S) = struct
     Log.debug (fun f -> f "remove %a" B.pp r);
     L.with_lock t.l r @@ fun () ->
     remove_unsafe t r >>= fun () ->
-    Fmt.epr "Write in other side!\n%!" ;
     Raw.commit "remove" t.db
 
   let eq_hashes = Irmin.Type.equal H.t
@@ -747,7 +733,6 @@ module Irmin_branch_store (B: Branch) (H: Irmin.Hash.S) = struct
        | None   -> remove_unsafe t r
        | Some v -> set_unsafe t r v)
       >>= fun () ->
-      Fmt.epr "Write in other side!\n%!" ;
       Raw.commit "test_and_set" t.db >|= fun () ->
       true
     in
@@ -962,10 +947,9 @@ module Make
       |> function
       | Some v ->
           if is_node k
-          then ( Fmt.epr "> Raw.add %S.\n%!" k ; Raw.add (DB.get_db_to_write t.new_db) k (upgrade_node t v) )
-          else ( Fmt.epr "> Promote val %S.\n%!" k ; promote_val t k v )
+          then ( Raw.add (DB.get_db_to_write t.new_db) k (upgrade_node t v) )
+          else ( promote_val t k v )
       | None   ->
-          Fmt.epr "promote %s: cannot promote key %S\n%!" msg k ;
           let k = H.of_raw (Cstruct.of_string k) in
           Fmt.failwith "promote %s: cannot promote key %a\n%!" msg H.pp k
 
@@ -1074,21 +1058,17 @@ module Make
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
           Lwt_mutex.unlock context.wr.mutex ;
-          Fmt.epr "Stop write thread.\n%!" ;
           Lwt.wakeup signal () ;
           Lwt.return ()
       | Some uniq ->
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
-          Fmt.epr "Promote %S.\n%!" k';
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
           promote "node" context.gc k' >>= fun () ->
-          Fmt.epr "%S promoted.\n%!" k';
           Lwt_mutex.unlock context.wr.mutex ;
           write_thread ~signal context ()
       | None ->
           Lwt_mutex.unlock context.wr.mutex ;
-          Fmt.epr "Wait to write.\n%!";
           Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
           write_thread ~signal context ()
 
@@ -1158,7 +1138,6 @@ module Make
           >>= fun () ->
           waiter_writer in
 
-        Fmt.epr "Start to scan root node.\n%!" ;
         final () in
 
       scan_and_write_threads ()
@@ -1175,7 +1154,6 @@ module Make
       (* let k' = P.XCommit.of_key k in *)
       copy_root gc (P.Commit.Val.node v) >>= fun () ->
       incr_commits gc.stats ;
-      Fmt.epr "Promote commit.\n%!" ;
       Lwt.return ()
     (* promote "commit" gc k' *)
 
@@ -1221,7 +1199,7 @@ module Make
     Lwt_list.iteri_s (fun i k ->
         Irmin_GC.copy_commit t k >>= fun () ->
         (* flush to disk regularly to not hold too much data into RAM *)
-        if i mod 1000 = 0 then ( Raw.commit "flush roots" (Irmin_GC.DB.get_db_to_write t.new_db) >>= fun () -> Fmt.epr "Database flushed?\n%!" ; Lwt.return () )
+        if i mod 1000 = 0 then ( Raw.commit "flush roots" (Irmin_GC.DB.get_db_to_write t.new_db))
         else Lwt.return ()
       ) roots
     >>= fun () ->
