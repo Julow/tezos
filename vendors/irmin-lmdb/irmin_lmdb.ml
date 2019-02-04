@@ -168,8 +168,9 @@ let with_read_db db ~f =
   match db.wtxn with
   | None ->
       Lmdb.with_ro_db db.db ~f:f.f
-  | Some (txn, ddb) ->
-      f.f txn ddb
+  | Some _ ->
+      Lmdb.with_ro_db db.db ~f:f.f
+(* f.f txn ddb *)
 
 let get txn db k =
   Result.map ~f:Cstruct.of_bigarray (Lmdb.get txn db k)
@@ -203,7 +204,7 @@ module Raw = struct
     |> of_result "add_ba"
 
   let add db k v =
-    Fmt.epr "[%d] Process Raw.add.\n%!" (Unix.getpid ());
+    Fmt.epr "Process Raw.add.\n%!" ;
     match v with
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
