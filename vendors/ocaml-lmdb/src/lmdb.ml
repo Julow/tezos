@@ -3,6 +3,8 @@
    Distributed under the ISC license, see terms at the end of the file.
   ---------------------------------------------------------------------------*)
 
+let () = Printexc.record_backtrace true
+
 module Option = struct
   let map ~f = function
     | None -> None
