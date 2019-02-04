@@ -207,6 +207,8 @@ CAMLprim value stub_mdb_txn_begin(value env, value flags, value parent) {
     MDB_txn *parent_txn = Is_block(parent) ? Txn_val(Field(parent, 0)) : NULL;
     MDB_txn *new_txn;
 
+    if (parent_txn == NULL)
+      printf("C: parent is <null>.\n");
     printf("C: call mdb_txn_begin.\n");
     ret = mdb_txn_begin(Env_val(env), parent_txn, Int_val(flags), &new_txn);
     printf("C: mdb_txn_begin returns %d.\n", ret);
@@ -237,7 +239,9 @@ CAMLprim value stub_mdb_txn_id(value txn) {
 }
 
 CAMLprim value stub_mdb_txn_commit(value txn) {
-    return Val_int(mdb_txn_commit(Txn_val(txn)));
+    int res = mdb_txn_commit(Txn_val(txn));
+    printf("mdb_txn_commit terminated.\n");
+    return (res);
 }
 
 CAMLprim value stub_mdb_txn_abort(value txn) {
