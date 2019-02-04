@@ -719,6 +719,7 @@ module Irmin_branch_store (B: Branch) (H: Irmin.Hash.S) = struct
     Log.debug (fun f -> f "set %a" B.pp r);
     L.with_lock t.l r @@ fun () ->
     set_unsafe t r k >>= fun () ->
+    Fmt.epr "Write in other side!\n%!" ;
     Raw.commit "set" t.db
 
   let remove_unsafe t r =
@@ -729,6 +730,7 @@ module Irmin_branch_store (B: Branch) (H: Irmin.Hash.S) = struct
     Log.debug (fun f -> f "remove %a" B.pp r);
     L.with_lock t.l r @@ fun () ->
     remove_unsafe t r >>= fun () ->
+    Fmt.epr "Write in other side!\n%!" ;
     Raw.commit "remove" t.db
 
   let eq_hashes = Irmin.Type.equal H.t
@@ -742,6 +744,7 @@ module Irmin_branch_store (B: Branch) (H: Irmin.Hash.S) = struct
        | None   -> remove_unsafe t r
        | Some v -> set_unsafe t r v)
       >>= fun () ->
+      Fmt.epr "Write in other side!\n%!" ;
       Raw.commit "test_and_set" t.db >|= fun () ->
       true
     in
