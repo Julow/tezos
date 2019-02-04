@@ -48,7 +48,9 @@ type t = {
 
 let of_result op = function
   | Ok v      -> Lwt.return v
-  | Error err -> Fmt.kstrf Lwt.fail_with "%s: %a" op Lmdb.pp_error err
+  | Error err ->
+      Fmt.epr "%s: %a.\n%!" op Lmdb.pp_error err ;
+      Fmt.kstrf Lwt.fail_with "%s: %a" op Lmdb.pp_error err
 
 let (|>>) v f =
   match v with
@@ -59,8 +61,11 @@ let get_wtxn db =
   match db.wtxn with
   | Some t -> Ok t
   | None ->
+      Fmt.epr "create_rw_txn.\n%!" ;
       Lmdb.create_rw_txn db.db |>> fun txn ->
+      Fmt.epr "create_rw_txn: finished.\n%!" ;
       Lmdb.opendb txn |>> fun ddb ->
+      Fmt.epr "create_rw_txn & opendb: finished.\n%!" ;
       db.wtxn <- Some (txn, ddb);
       Ok (txn, ddb)
 
@@ -195,9 +200,11 @@ module Raw = struct
   let add_cstruct db k v =
     (get_wtxn db |>> fun (txn, ddb) ->
             let res = Lmdb.put txn ddb k (Cstruct.to_bigarray v) in Fmt.epr "Lmdb.put finished.\n%!" ; res )
-  |> of_result "add_ba"
+    |> of_result "add_ba"
 
-  let add db k = function
+  let add db k v =
+    Fmt.epr "Raw.add executed.\n%!" ;
+    match v with
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
 

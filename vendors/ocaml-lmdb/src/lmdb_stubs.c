@@ -197,6 +197,8 @@ CAMLprim value stub_mdb_env_get_maxkeysize(value env) {
     return Val_int(mdb_env_get_maxkeysize(Env_val(env)));
 }
 
+#include <stdio.h>
+
 CAMLprim value stub_mdb_txn_begin(value env, value flags, value parent) {
     CAMLparam3(env, flags, parent);
     CAMLlocal2(result, ml_txn);
@@ -205,7 +207,9 @@ CAMLprim value stub_mdb_txn_begin(value env, value flags, value parent) {
     MDB_txn *parent_txn = Is_block(parent) ? Txn_val(Field(parent, 0)) : NULL;
     MDB_txn *new_txn;
 
+    printf("C: call mdb_txn_begin.\n");
     ret = mdb_txn_begin(Env_val(env), parent_txn, Int_val(flags), &new_txn);
+    printf("C: mdb_txn_begin returns %d.\n", ret);
 
     if (ret) {
         result = caml_alloc(1, 1);
