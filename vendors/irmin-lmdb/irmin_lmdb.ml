@@ -203,7 +203,7 @@ module Raw = struct
     |> of_result "add_ba"
 
   let add db k v =
-    Fmt.epr "Process Raw.add.\n%!" ;
+    Fmt.epr "[%d] Process Raw.add.\n%!" (Unix.getpid ());
     match v with
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
@@ -262,6 +262,7 @@ module AO (K: Irmin.Hash.S) (V: Irmin.Contents.S0) (Conv: sig
   let add db v =
     let k = Conv.digest v in
     let v = Conv.of_value v in
+    Fmt.epr "Write in other side.\n%!" ;
     Raw.add db (Conv.of_key k) v >|= fun () ->
     k
 
@@ -622,6 +623,7 @@ module Irmin_value_store
       end)
 
     let add db v =
+      Fmt.epr "Write and commit in other side.\n%!" ;
       add db v >>= fun k ->
       Raw.commit "Commit.add" db >|= fun () ->
       k
@@ -706,6 +708,7 @@ module Irmin_branch_store (B: Branch) (H: Irmin.Hash.S) = struct
   let set_unsafe t r k =
     let r = lmdb_of_branch r in
     let k = lmdb_of_hash k in
+    Fmt.epr "Write in other side!\n%!" ;
     Raw.add_cstruct t.db r k
 
   let set t r k =
@@ -1189,7 +1192,7 @@ module Make
     Lwt_list.iteri_s (fun i k ->
         Irmin_GC.copy_commit t k >>= fun () ->
         (* flush to disk regularly to not hold too much data into RAM *)
-        if i mod 1000 = 0 then ( Raw.commit "flush roots" t.new_db >>= fun () -> Fmt.epr "Database flushed.\n%!" ; Lwt.return () )
+        if i mod 1000 = 0 then ( Raw.commit "flush roots" t.new_db >>= fun () -> Fmt.epr "Database flushed?\n%!" ; Lwt.return () )
         else Lwt.return ()
       ) roots
     >>= fun () ->

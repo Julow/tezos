@@ -209,6 +209,7 @@ CAMLprim value stub_mdb_txn_begin(value env, value flags, value parent) {
 
     if (parent_txn == NULL)
       printf("C: parent is <null>.\n");
+
     printf("C: call mdb_txn_begin.\n");
     ret = mdb_txn_begin(Env_val(env), parent_txn, Int_val(flags), &new_txn);
     printf("C: mdb_txn_begin returns %d.\n", ret);
