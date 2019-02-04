@@ -219,8 +219,8 @@ module Raw = struct
     (match db.wtxn with
      | None -> Ok ()
      | Some (t, _ddb) ->
-         db.wtxn <- None;
-         Lmdb.commit_txn t)
+         let res = Lmdb.commit_txn t in
+         db.wtxn <- None ; res )
     |> of_result op
 
   let fsync db =
