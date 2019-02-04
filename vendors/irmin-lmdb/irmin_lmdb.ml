@@ -189,12 +189,12 @@ module Raw = struct
 
   let add_string db k v =
     (get_wtxn db |>> fun (txn, ddb) ->
-     Lmdb.put_string txn ddb k v)
+            let res = Lmdb.put_string txn ddb k v in Fmt.epr "Lmdb.put finished.\n%!" ; res)
     |> of_result "add_string"
 
   let add_cstruct db k v =
     (get_wtxn db |>> fun (txn, ddb) ->
-     Lmdb.put txn ddb k (Cstruct.to_bigarray v))
+            let res = Lmdb.put txn ddb k (Cstruct.to_bigarray v) in Fmt.epr "Lmdb.put finished.\n%!" ; res )
   |> of_result "add_ba"
 
   let add db k = function
@@ -919,9 +919,10 @@ module Make
       |> function
       | Some v ->
           if is_node k
-          then Raw.add t.new_db k( upgrade_node t v)
-          else promote_val t k v
+          then ( Fmt.epr "> Raw.add %S.\n%!" k ; Raw.add t.new_db k (upgrade_node t v) )
+          else ( Fmt.epr "> Promote val %S.\n%!" k ; promote_val t k v )
       | None   ->
+          Fmt.epr "promote %s: cannot promote key %S\n%!" msg k ;
           let k = H.of_raw (Cstruct.of_string k) in
           Fmt.failwith "promote %s: cannot promote key %a\n%!" msg H.pp k
 
@@ -976,7 +977,7 @@ module Make
                   (fun () ->
                      let k' = P.XContents.of_key k in
 
-                     if not (Tbl.mem context.gc.tbl k')
+                     if not (mem context.gc k')
                      then
                        ( incr_contents context.gc.stats ;
                          let uniq = Uniq.generate () in
@@ -998,11 +999,15 @@ module Make
       let rec go () =
         let rec consume_to_next_scan () =
           match Queue.top context.rd.value with
-          | { status= Do_promotion; derivation= k; _ } ->
+          | { status= Do_promotion; derivation= k'; _ } ->
               ignore @@ Queue.pop context.rd.value ;
-              let uniq = Uniq.generate () in
-              TransTbl.add context.tbl uniq k ;
-              safe_to_promote context uniq >>= fun () -> consume_to_next_scan ()
+
+              if mem context.gc k'
+              then
+                ( let uniq = Uniq.generate () in
+                  TransTbl.add context.tbl uniq k' ;
+                  safe_to_promote context uniq >>= fun () -> consume_to_next_scan () )
+              else consume_to_next_scan ()
           | to_scan ->
               ignore @@ Queue.pop context.rd.value ;
               Lwt.return (Some to_scan)
@@ -1021,21 +1026,21 @@ module Make
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
+          Fmt.epr "Stop write thread.\n%!" ;
           Lwt.wakeup signal () ;
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
       | Some uniq ->
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
+          Fmt.epr "Promote %S.\n%!" k';
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
           Lwt_mutex.unlock context.wr.mutex ;
-          (match mem context.gc k' with
-           | true ->
-               write_thread ~signal context ()
-           | false ->
-               promote "node" context.gc k' >>= fun () ->
-               write_thread ~signal context ())
+          promote "node" context.gc k' >>= fun () ->
+          Fmt.epr "%S promoted.\n%!" k';
+          write_thread ~signal context ()
       | None ->
+          Fmt.epr "Wait to write.\n%!";
           Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
           Lwt_mutex.unlock context.wr.mutex ;
           write_thread ~signal context ()
@@ -1055,7 +1060,7 @@ module Make
     let pass gc roots =
       let make_context_from roots =
         let rd_queue = Queue.create () in
-        let wr_queue, _ = Ke.Rke.Weighted.create ~capacity:0x100 Bigarray.Int in
+        let wr_queue, _ = Ke.Rke.Weighted.create ~capacity:0x10000 Bigarray.Int in
 
         let rec go = function
           | [] -> ()
@@ -1106,6 +1111,7 @@ module Make
           >>= fun () ->
           waiter_writer in
 
+        Fmt.epr "Start to scan root node.\n%!" ;
         final () in
 
       scan_and_write_threads ()
@@ -1168,7 +1174,7 @@ module Make
     Lwt_list.iteri_s (fun i k ->
         Irmin_GC.copy_commit t k >>= fun () ->
         (* flush to disk regularly to not hold too much data into RAM *)
-        if i mod 1000 = 0 then Raw.commit "flush roots" t.new_db
+        if i mod 1000 = 0 then ( Raw.commit "flush roots" t.new_db >>= fun () -> Fmt.epr "Database flushed.\n%!" ; Lwt.return () )
         else Lwt.return ()
       ) roots
     >>= fun () ->
