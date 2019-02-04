@@ -109,7 +109,9 @@ let error_of_int = function
   | -30781 -> BadValSize
   | -30780 -> BadDbi
   | -30779 -> TxnProblem
-  | i -> invalid_arg (Printf.sprintf "error_of_int: %d" i)
+  | i ->
+      Format.eprintf "GOT %d AS AN ERROR.\n%!" i ;
+      invalid_arg (Printf.sprintf "error_of_int: %d" i)
 
 type version = {
   major : int ;
