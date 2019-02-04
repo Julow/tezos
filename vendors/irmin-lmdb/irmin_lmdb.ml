@@ -203,7 +203,7 @@ module Raw = struct
     |> of_result "add_ba"
 
   let add db k v =
-    Fmt.epr "Process Raw.add.\n%!" ;
+    Fmt.epr "[%d] Process Raw.add.\n%!" (Unix.getpid ());
     match v with
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
