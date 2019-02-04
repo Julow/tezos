@@ -1078,13 +1078,13 @@ module Make
           Lwt.wakeup signal () ;
           Lwt.return ()
       | Some uniq ->
-          Lwt_mutex.unlock context.wr.mutex ;
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
           Fmt.epr "Promote %S.\n%!" k';
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
           promote "node" context.gc k' >>= fun () ->
           Fmt.epr "%S promoted.\n%!" k';
+          Lwt_mutex.unlock context.wr.mutex ;
           write_thread ~signal context ()
       | None ->
           Lwt_mutex.unlock context.wr.mutex ;
