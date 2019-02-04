@@ -239,7 +239,9 @@ CAMLprim value stub_mdb_txn_id(value txn) {
 }
 
 CAMLprim value stub_mdb_txn_commit(value txn) {
-    return Val_int(mdb_txn_commit(Txn_val(txn)));
+    int res = mdb_txn_commit(Txn_val(txn));
+    printf("mdb_txn_commit terminated.\n");
+    return (res);
 }
 
 CAMLprim value stub_mdb_txn_abort(value txn) {
