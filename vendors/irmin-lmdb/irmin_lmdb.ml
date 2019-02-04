@@ -185,12 +185,10 @@ let find_bind db k ~f =
 module Raw = struct
 
   let mem db k =
-    Fmt.epr "Process Raw.mem.\n%!" ;
     with_read_db db ~f:{ f = fun txn db -> Lmdb.mem txn db k }
     |> of_result "mem"
 
   let find db key of_ba =
-    Fmt.epr "Process Raw.find.\n%!" ;
     find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
     |> of_result "find"
 
