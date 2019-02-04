@@ -716,6 +716,7 @@ module Chain = struct
           Store.Chain_data.Caboose.store data.chain_data_store caboose >>= fun () ->
           Lwt.return_unit
         end
+
       end
     end
 
@@ -1529,9 +1530,12 @@ let check_and_save_history_mode
       iter_s (fun chain_state ->
           Chain.checkpoint chain_state >>= fun checkpoint ->
           let lvl = checkpoint.shell.level in
-          let hash = Block_header.hash checkpoint in
-          Chain.purge_full chain_state (lvl, hash) >>= fun () ->
-          return_unit
+          if Int32.equal lvl Int32.zero then
+            return_unit
+          else
+            let hash = Block_header.hash checkpoint in
+            Chain.purge_full chain_state (lvl, hash) >>= fun () ->
+            return_unit
         ) chains >>=? fun () ->
       return_unit
   | (Archive, Rolling) | (Full, Rolling) ->
@@ -1545,9 +1549,12 @@ let check_and_save_history_mode
       iter_s (fun chain_state ->
           Chain.checkpoint chain_state >>= fun checkpoint ->
           let lvl = checkpoint.shell.level in
-          let hash = Block_header.hash checkpoint in
-          Chain.purge_rolling chain_state (lvl, hash) >>= fun () ->
-          return_unit
+          if Int32.equal lvl Int32.zero then
+            return_unit
+          else
+            let hash = Block_header.hash checkpoint in
+            Chain.purge_rolling chain_state (lvl, hash) >>= fun () ->
+            return_unit
         ) chains >>=? fun () ->
       return_unit
 
