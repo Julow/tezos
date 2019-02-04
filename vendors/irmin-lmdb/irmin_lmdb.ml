@@ -185,10 +185,12 @@ let find_bind db k ~f =
 module Raw = struct
 
   let mem db k =
+    Fmt.epr "Process Raw.mem.\n%!" ;
     with_read_db db ~f:{ f = fun txn db -> Lmdb.mem txn db k }
     |> of_result "mem"
 
   let find db key of_ba =
+    Fmt.epr "Process Raw.find.\n%!" ;
     find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
     |> of_result "find"
 
@@ -203,12 +205,13 @@ module Raw = struct
     |> of_result "add_ba"
 
   let add db k v =
-    Fmt.epr "Raw.add executed.\n%!" ;
+    Fmt.epr "Process Raw.add.\n%!" ;
     match v with
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
 
   let remove db k =
+    Fmt.epr "Process Raw.remove.\n%!" ;
     (get_wtxn db |>> fun (txn, ddb) ->
      match Lmdb.del txn ddb k with
      | Ok () | Error Lmdb.KeyNotFound -> Ok ()
@@ -216,15 +219,18 @@ module Raw = struct
     |> of_result "remove"
 
   let commit op db =
+    Fmt.epr "Process Raw.commit.\n%!" ;
     (match db.wtxn with
      | None -> Ok ()
      | Some (t, _ddb) ->
          let res = Lmdb.commit_txn t in
          Fmt.epr "Database committed.\n%!" ;
+         (* db.wtxn <- None ; *)
          res )
     |> of_result op
 
   let fsync db =
+    Fmt.epr "Process Raw.fsync.\n%!" ;
     Lmdb.sync ~force:true db.db
     |> of_result "fsync"
 
