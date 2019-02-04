@@ -220,6 +220,7 @@ module Raw = struct
      | None -> Ok ()
      | Some (t, _ddb) ->
          let res = Lmdb.commit_txn t in
+         Fmt.epr "Database committed.\n%!" ;
          db.wtxn <- None ; res )
     |> of_result op
 
