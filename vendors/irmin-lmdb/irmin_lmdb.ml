@@ -1173,7 +1173,7 @@ module Make
       copy_root gc (P.Commit.Val.node v) >>= fun () ->
       incr_commits gc.stats ;
       Fmt.epr "Promote commit.\n%!" ;
-      Lwt.return (Ok ())
+      Lwt.return ()
     (* promote "commit" gc k' *)
 
     let root repo =
