@@ -165,6 +165,8 @@ type ('r) reader =
   { f : 'k. 'k Lmdb.txn -> Lmdb.db -> ('r, Lmdb.error) result } [@@unboxed]
 
 let with_read_db db ~f =
+  Lmdb.with_ro_db db.db ~f:f.f
+  (*
   Lmdb.create_ro_txn db.db |>> fun txn ->
   Lmdb.opendb txn |>> fun db ->
   f.f txn db |> function
@@ -173,6 +175,7 @@ let with_read_db db ~f =
   | Error err ->
       Lmdb.abort_txn txn ;
       Error err
+  *)
 
 let get txn db k =
   Result.map ~f:Cstruct.of_bigarray (Lmdb.get txn db k)
