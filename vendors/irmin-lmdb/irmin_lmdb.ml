@@ -1169,11 +1169,12 @@ module Make
     let copy_commit gc k =
       Lwt_switch.check gc.switch;
       P.XCommit.find_v (DB.get_db_to_read gc.old_db) k >|= Option.get >>= fun (_, v) ->
-      let k' = P.XCommit.of_key k in
+      (* let k' = P.XCommit.of_key k in *)
       copy_root gc (P.Commit.Val.node v) >>= fun () ->
       incr_commits gc.stats ;
       Fmt.epr "Promote commit.\n%!" ;
-      promote "commit" gc k'
+      Lwt.return ()
+    (* promote "commit" gc k' *)
 
     let root repo =
       let c = repo.P.Repo.config in
