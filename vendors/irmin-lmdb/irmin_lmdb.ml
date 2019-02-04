@@ -978,7 +978,6 @@ module Make
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        Fmt.epr "Scan %a .\n%!" H.pp value.key ;
         P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
@@ -1039,23 +1038,23 @@ module Make
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
+          Lwt_mutex.unlock context.wr.mutex ;
           Fmt.epr "Stop write thread.\n%!" ;
           Lwt.wakeup signal () ;
-          Lwt_mutex.unlock context.wr.mutex ;
           Lwt.return ()
       | Some uniq ->
+          Lwt_mutex.unlock context.wr.mutex ;
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
           Fmt.epr "Promote %S.\n%!" k';
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
-          Lwt_mutex.unlock context.wr.mutex ;
           promote "node" context.gc k' >>= fun () ->
           Fmt.epr "%S promoted.\n%!" k';
           write_thread ~signal context ()
       | None ->
+          Lwt_mutex.unlock context.wr.mutex ;
           Fmt.epr "Wait to write.\n%!";
           Lwt_condition.wait ~mutex:context.wr.mutex context.more >>= fun () ->
-          Lwt_mutex.unlock context.wr.mutex ;
           write_thread ~signal context ()
 
     let rec stop_promotion context =
