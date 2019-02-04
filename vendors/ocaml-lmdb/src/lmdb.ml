@@ -346,9 +346,9 @@ external txn_begin :
 
 let create_rw_txn ?(nosync=false) ?(nometasync=false) ?parent t =
   let flags = match nosync, nometasync with
-    | true, true -> int_of_flags_env [NoSync; NoMetaSync]
-    | true, false -> int_of_flag_env NoSync
-    | false, true -> int_of_flag_env NoMetaSync
+    | true, true -> int_of_flags_env [NoSync; NoMetaSync; NoLock]
+    | true, false -> int_of_flags_env [NoSync; NoLock]
+    | false, true -> int_of_flags_env [NoMetaSync; NoLock]
     | _ -> 0 in
   match txn_begin t flags (Option.map ~f:rawtxn_of_txn parent) with
   | Error i -> Error (error_of_int i)
