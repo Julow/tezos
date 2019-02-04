@@ -428,6 +428,7 @@ let with_ro_db ?nosync ?nometasync ?parent ?flags ?name t ~f =
       abort_txn txn ;
       raise exn
   | Ok res ->
+      Format.eprintf "WE WILL COMMIT.\n%!" ;
       commit_txn txn >>= fun () ->
       Ok res
   | Error err ->
@@ -442,6 +443,7 @@ let with_rw_db ?nosync ?nometasync ?parent ?flags ?name t ~f =
       abort_txn txn ;
       raise exn
   | Ok res ->
+      Format.eprintf "WE WILL COMMIT.\n%!" ;
       commit_txn txn >>= fun () ->
       Ok res
   | Error err ->
