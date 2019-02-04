@@ -1189,7 +1189,7 @@ module Make
     Lwt_list.iteri_s (fun i k ->
         Irmin_GC.copy_commit t k >>= fun () ->
         (* flush to disk regularly to not hold too much data into RAM *)
-        if i mod 1000 = 0 then ( Fmt.epr "Database flushed?\n%!" ; Lwt.return () )
+        if i mod 1000 = 0 then ( Raw.commit "flush roots" t.new_db >>= fun () -> Fmt.epr "Database flushed?\n%!" ; Lwt.return () )
         else Lwt.return ()
       ) roots
     >>= fun () ->
