@@ -224,10 +224,11 @@ module Raw = struct
     (match db.wtxn with
      | None -> Ok ()
      | Some (t, _ddb) ->
-         let res = Lmdb.commit_txn t in
+         let res0 = Lmdb.commit_txn t in
+         let () = Lmdb.abort_txn t in
          Fmt.epr "Database committed.\n%!" ;
          db.wtxn <- None ;
-         res )
+         res0 )
     |> of_result op
 
   let fsync db =
