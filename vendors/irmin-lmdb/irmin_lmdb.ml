@@ -168,8 +168,9 @@ let with_read_db db ~f =
   match db.wtxn with
   | None ->
       Lmdb.with_ro_db db.db ~f:f.f
-  | Some (txn, ddb) ->
-      f.f txn ddb
+  | Some _ ->
+      Lmdb.with_ro_db db.db ~f:f.f
+      (* f.f txn ddb *)
 
 let get txn db k =
   Result.map ~f:Cstruct.of_bigarray (Lmdb.get txn db k)
@@ -203,7 +204,7 @@ module Raw = struct
     |> of_result "add_ba"
 
   let add db k v =
-    Fmt.epr "[%d] Process Raw.add.\n%!" (Unix.getpid ());
+    Fmt.epr "Process Raw.add.\n%!" ;
     match v with
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
@@ -858,17 +859,35 @@ module Make
 
     module TransTbl = Hashtbl.Make(Uniq)
 
+    module DB : sig
+      type 'a t = private P.Contents.t constraint 'a = [< `WO | `RO ]
+
+      val ro : P.Contents.t -> [ `RO ] t
+      val wo : P.Contents.t -> [ `WO ] t
+
+      val get_db_to_write : [ `WO ] t -> P.Contents.t
+      val get_db_to_read : [ `RO ] t -> P.Contents.t
+    end = struct
+      type 'a t = P.Contents.t constraint 'a = [< `WO | `RO ]
+
+      external ro : P.Contents.t -> [ `RO ] t = "%identity"
+      external wo : P.Contents.t -> [ `WO ] t = "%identity"
+
+      external get_db_to_write : [ `WO ] t -> P.Contents.t = "%identity"
+      external get_db_to_read : [ `RO ] t -> P.Contents.t = "%identity"
+    end
+
     type t = {
       tbl   : Tbl.t;
-      new_db: P.Contents.t;
-      old_db: P.Contents.t;
+      new_db: [ `WO ] DB.t;
+      old_db: [ `RO ] DB.t;
       stats : stats;
       switch: Lwt_switch.t option;
     }
 
     let close t =
-      close t.new_db;
-      close t.old_db
+      close (t.new_db :> P.Contents.t);
+      close (t.old_db :> P.Contents.t)
 
     let new_root repo =
       let c = Conf.of_config repo.P.Repo.config in
@@ -882,7 +901,7 @@ module Make
       let new_db = make config in
       let tbl = Tbl.create 10_123 in
       let stats = stats () in
-      { tbl; stats; new_db; old_db = repo.db; switch }
+      { tbl; stats; new_db= DB.wo new_db; old_db = DB.ro repo.db; switch }
 
     let of_result computation = function
       | Ok v -> v
@@ -893,7 +912,7 @@ module Make
       |> of_result "find"
 
     let promote_val t k v =
-      Raw.add_cstruct t.new_db k v
+      Raw.add_cstruct (DB.get_db_to_write t.new_db) k v
 
     let is_node k =
       String.length k > 4
@@ -930,11 +949,11 @@ module Make
 
       (match old with
        | Some _ -> old
-       | None   -> raw_find t.old_db k (fun x -> Ok x))
+       | None   -> raw_find (DB.get_db_to_read t.old_db) k (fun x -> Ok x))
       |> function
       | Some v ->
           if is_node k
-          then ( Fmt.epr "> Raw.add %S.\n%!" k ; Raw.add t.new_db k (upgrade_node t v) )
+          then ( Fmt.epr "> Raw.add %S.\n%!" k ; Raw.add (DB.get_db_to_write t.new_db) k (upgrade_node t v) )
           else ( Fmt.epr "> Promote val %S.\n%!" k ; promote_val t k v )
       | None   ->
           Fmt.epr "promote %s: cannot promote key %S\n%!" msg k ;
@@ -985,7 +1004,7 @@ module Make
       | true -> Lwt.return ()
       | false ->
         Tbl.add context.gc.tbl k' ;
-        P.XNode.find_v context.gc.old_db value.key >|= Option.get >>= fun (_, v) ->
+        P.XNode.find_v (DB.get_db_to_read context.gc.old_db) value.key >|= Option.get >>= fun (_, v) ->
         let children = P.Node.Val.list v in
         incr_nodes context.gc.stats ;
         update_width context.gc.stats children ;
@@ -1143,7 +1162,7 @@ module Make
 
     let copy_commit gc k =
       Lwt_switch.check gc.switch;
-      P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (_, v) ->
+      P.XCommit.find_v (DB.get_db_to_read gc.old_db) k >|= Option.get >>= fun (_, v) ->
       let k' = P.XCommit.of_key k in
       copy_root gc (P.Commit.Val.node v) >>= fun () ->
       incr_commits gc.stats ;
@@ -1175,8 +1194,8 @@ module Make
       >>= fun () ->
 
       (* fsync *)
-      Raw.commit "pivot" t.new_db >>= fun () ->
-      Raw.fsync t.new_db >>= fun () ->
+      Raw.commit "pivot" (DB.get_db_to_write t.new_db) >>= fun () ->
+      Raw.fsync (DB.get_db_to_write t.new_db) >>= fun () ->
 
       (* rename *)
       close t;
@@ -1192,7 +1211,7 @@ module Make
     Lwt_list.iteri_s (fun i k ->
         Irmin_GC.copy_commit t k >>= fun () ->
         (* flush to disk regularly to not hold too much data into RAM *)
-        if i mod 1000 = 0 then ( Raw.commit "flush roots" t.new_db >>= fun () -> Fmt.epr "Database flushed?\n%!" ; Lwt.return () )
+        if i mod 1000 = 0 then ( Raw.commit "flush roots" (Irmin_GC.DB.get_db_to_write t.new_db) >>= fun () -> Fmt.epr "Database flushed?\n%!" ; Lwt.return () )
         else Lwt.return ()
       ) roots
     >>= fun () ->
