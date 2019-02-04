@@ -168,7 +168,8 @@ let with_read_db db ~f =
   Lmdb.create_ro_txn db.db |>> fun txn ->
   Lmdb.opendb txn |>> fun db ->
   f.f txn db |> function
-  | Ok res -> Ok res
+  | Ok res ->
+      Lmdb.commit_txn txn |>> fun () -> Ok res
   | Error err ->
       Lmdb.abort_txn txn ;
       Error err
