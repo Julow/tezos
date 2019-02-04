@@ -59,6 +59,7 @@ let get_wtxn db =
   match db.wtxn with
   | Some t -> Ok t
   | None ->
+      Fmt.epr "create_rw_txn.\n%!" ;
       Lmdb.create_rw_txn db.db |>> fun txn ->
       Lmdb.opendb txn |>> fun ddb ->
       db.wtxn <- Some (txn, ddb);
