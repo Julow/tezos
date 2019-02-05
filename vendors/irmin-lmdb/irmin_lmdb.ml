@@ -1064,6 +1064,7 @@ module Make
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
           promote "node" context.gc k' >>= fun () ->
+          Raw.commit "flush roots" (DB.get_db_to_write context.gc.new_db) >>= fun () ->
           Lwt_mutex.unlock context.wr.mutex ;
           write_thread ~signal context ()
       | None ->
@@ -1195,12 +1196,7 @@ module Make
   end
 
   let promote_all ~(repo:repo) ?before_pivot ~branches t roots =
-    Lwt_list.iteri_s (fun i k ->
-        Irmin_GC.copy_commit t k >>= fun () ->
-        (* flush to disk regularly to not hold too much data into RAM *)
-        if i mod 1000 = 0 then ( Raw.commit "flush roots" (Irmin_GC.DB.get_db_to_write t.new_db))
-        else Lwt.return ()
-      ) roots
+    Lwt_list.iteri_s (fun _ k -> Irmin_GC.copy_commit t k) roots
     >>= fun () ->
     (match before_pivot with
      | None   -> Lwt.return ()
