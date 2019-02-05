@@ -14,6 +14,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *)
 
+let () = Printexc.record_backtrace true
+
 module Option = struct
   let of_result = function
     | Ok v -> Some v
