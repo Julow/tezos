@@ -1056,7 +1056,6 @@ module Make
       Lwt_mutex.lock context.wr.mutex >>= fun () ->
       match Ke.Rke.Weighted.pop context.wr.value with
       | Some (-1) ->
-          Raw.commit "flush roots" (DB.get_db_to_write context.gc.new_db) >>= fun () ->
           Lwt_mutex.unlock context.wr.mutex ;
           Lwt.wakeup signal () ;
           Lwt.return ()
@@ -1065,6 +1064,7 @@ module Make
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
           promote "node" context.gc k' >>= fun () ->
+          Raw.commit "flush roots" (DB.get_db_to_write context.gc.new_db) >>= fun () ->
           Lwt_mutex.unlock context.wr.mutex ;
           write_thread ~signal context ()
       | None ->
@@ -1196,10 +1196,7 @@ module Make
   end
 
   let promote_all ~(repo:repo) ?before_pivot ~branches t roots =
-    Lwt_list.iteri_s (fun _ k ->
-        Irmin_GC.copy_commit t k
-        (* flush to disk regularly to not hold too much data into RAM *)
-              ) roots
+    Lwt_list.iteri_s (fun _ k -> Irmin_GC.copy_commit t k) roots
     >>= fun () ->
     (match before_pivot with
      | None   -> Lwt.return ()
