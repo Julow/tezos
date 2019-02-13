@@ -62,10 +62,16 @@ let get_wtxn db =
   match db.wtxn with
   | Some t -> Ok t
   | None ->
+      match
       Lmdb.create_rw_txn db.db |>> fun txn ->
       Lmdb.opendb txn |>> fun ddb ->
       db.wtxn <- Some (txn, ddb);
       Ok (txn, ddb)
+      with
+      | Ok _ as ok -> ok
+      | Error exn as e ->
+        Printf.printf "%s\n%!" (Fmt.strf "%a" Lmdb.pp_error exn);
+        e
 
 let src = Logs.Src.create "irmin.lmdb" ~doc:"Irmin in a Lmdb store"
 module Log = (val Logs.src_log src : Logs.LOG)
@@ -202,9 +208,21 @@ module Raw = struct
     |> of_result "add_string"
 
   let add_cstruct db k v =
+    match
     (get_wtxn db |>> fun (txn, ddb) ->
+            match(
             Lmdb.put txn ddb k (Cstruct.to_bigarray v))
-    |> of_result "add_ba"
+            with
+            | Ok _ as ok -> ok
+            | Error exn as e ->
+              Printf.printf "Lmdb.put: %s, k=%s\n%!" (Fmt.strf "%a" Lmdb.pp_error exn) k;
+              e
+        )
+    with
+    | Ok v -> Lwt.return v
+    | Error _ as e ->
+      Printf.printf "add_cstruct error k=%s\n%!" k;
+      of_result "add_ba" e
 
   let add db k v =
     match v with
@@ -1065,7 +1083,9 @@ module Make
           let k' = TransTbl.find context.tbl (Uniq.of_int_exn uniq) in
           TransTbl.remove context.tbl (Uniq.of_int_exn uniq) ;
           Lwt_condition.signal context.less () ;
+          Printf.printf "promote node\n%!";
           promote "node" context.gc k' >>= fun () ->
+          Printf.printf "promote node done\n%!";
           Raw.commit "flush roots" (DB.get_db_to_write context.gc.new_db) >>= fun () ->
           Lwt_mutex.unlock context.wr.mutex ;
           write_thread ~signal context ()
