@@ -875,13 +875,14 @@ module Make
       if current_time -. !last_time > 5. (* print something every 5s *)
       then (
         last_time := current_time;
-        Fmt.pr "GC: %d min elapsed - %a\n%!"
-          (int_of_float ((!last_time -. Lazy.force init_time) /. 60.))
-          pp_stats t.stats;
+        let elapsed = !last_time -. Lazy.force init_time in
+        Fmt.pr "GC: %d min elapsed - %a\n%d nodes / second\n%!"
+          (int_of_float (elapsed /. 60.))
+          pp_stats t.stats
+          (t.stats.promoted_nodes / (int_of_float elapsed + 1));
       )
 
     let promote msg t ?old k =
-      print_message t;
       (match old with
        | Some _ -> Lwt.return old
        | None   -> Raw.find t.old_db k (fun x -> Ok x))
@@ -955,6 +956,7 @@ module Make
           )
 
     let pass gc roots =
+      print_message gc;
       (* Printf.printf "Pass (%d roots)\n%!" (List.length roots); *)
       let make_context_from roots =
         let rd_queue = Queue.create () in
@@ -970,6 +972,7 @@ module Make
                   ; gc } in
       let context = make_context_from roots in
       dispatcher context >>= fun () ->
+      Printf.printf "end of dispatch, %d elements in write queue\n%!" (Queue.length context.wr);
       writer context
 
     let copy_root gc k =
