@@ -46,10 +46,6 @@ type t = {
   mutable wtxn: wtxn option;
 }
 
-let of_result op = function
-  | Ok v      -> Lwt.return v
-  | Error err -> Fmt.kstrf Lwt.fail_with "%s: %a" op Lmdb.pp_error err
-
 let (|>>) v f =
   match v with
   | Ok v -> f v
@@ -179,46 +175,64 @@ let find_bind db k ~f =
 
 module Raw = struct
 
+  let of_result op = function
+    | Ok v      -> v
+    | Error err -> Fmt.failwith "%s: %a" op Lmdb.pp_error err
+
   let mem db k =
-    with_read_db db ~f:{ f = fun txn db -> Lmdb.mem txn db k }
-    |> of_result "mem"
+    Lwt_preemptive.detach (fun () ->
+      with_read_db db ~f:{ f = fun txn db -> Lmdb.mem txn db k }
+      |> of_result "mem"
+    ) ()
 
   let find db key of_ba =
-    find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
-    |> of_result "find"
+    Lwt_preemptive.detach (fun () ->
+      find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
+      |> of_result "find"
+    ) ()
 
   let add_string db k v =
-    (get_wtxn db |>> fun (txn, ddb) ->
-     Lmdb.put_string txn ddb k v)
-    |> of_result "add_string"
+    Lwt_preemptive.detach (fun () ->
+      (get_wtxn db |>> fun (txn, ddb) ->
+       Lmdb.put_string txn ddb k v)
+      |> of_result "add_string"
+    ) ()
 
   let add_cstruct db k v =
-    (get_wtxn db |>> fun (txn, ddb) ->
-     Lmdb.put txn ddb k (Cstruct.to_bigarray v))
-  |> of_result "add_ba"
+    Lwt_preemptive.detach (fun () ->
+      (get_wtxn db |>> fun (txn, ddb) ->
+       Lmdb.put txn ddb k (Cstruct.to_bigarray v))
+      |> of_result "add_ba"
+    ) ()
 
   let add db k = function
     | `String v   -> add_string db k v
     | `Cstruct v  -> add_cstruct db k v
 
   let remove db k =
-    (get_wtxn db |>> fun (txn, ddb) ->
-     match Lmdb.del txn ddb k with
-     | Ok () | Error Lmdb.KeyNotFound -> Ok ()
-     | x -> x)
-    |> of_result "remove"
+    Lwt_preemptive.detach (fun () ->
+      (get_wtxn db |>> fun (txn, ddb) ->
+       match Lmdb.del txn ddb k with
+       | Ok () | Error Lmdb.KeyNotFound -> Ok ()
+       | x -> x)
+      |> of_result "remove"
+    ) ()
 
   let commit op db =
-    (match db.wtxn with
-     | None -> Ok ()
-     | Some (t, _ddb) ->
-         db.wtxn <- None;
-         Lmdb.commit_txn t)
-    |> of_result op
+    Lwt_preemptive.detach (fun () ->
+      (match db.wtxn with
+       | None -> Ok ()
+       | Some (t, _ddb) ->
+           db.wtxn <- None;
+           Lmdb.commit_txn t)
+      |> of_result op
+    ) ()
 
   let fsync db =
-    Lmdb.sync ~force:true db.db
-    |> of_result "fsync"
+    Lwt_preemptive.detach (fun () ->
+      Lmdb.sync ~force:true db.db
+      |> of_result "fsync"
+    ) ()
 
 end
 
@@ -783,16 +797,18 @@ module Make
     mutable upgraded_nodes : int;
     mutable width: int;
     mutable depth: int;
+    mutable writer_skip: int;
   }
 
   let pp_stats ppf t =
-    Fmt.pf ppf "[%d blobs/%d nodes (%d upgrades)/%d commits] depth:%d width:%d"
+    Fmt.pf ppf "[%d blobs/%d nodes (%d upgrades)/%d commits] depth:%d width:%d writer_skip:%d"
       t.promoted_contents
       t.promoted_nodes
       t.upgraded_nodes
       t.promoted_commits
       t.depth
       t.width
+      t.writer_skip
 
   let stats () = {
     promoted_contents = 0;
@@ -801,6 +817,7 @@ module Make
     upgraded_nodes = 0;
     width = 0;
     depth = 0;
+    writer_skip = 0
   }
 
   (* poor-man GC *)
@@ -812,6 +829,7 @@ module Make
     let incr_commits s = s.promoted_commits <- s.promoted_commits + 1
     let update_width s c = s.width <- max s.width (List.length c)
     let update_depth s n = s.depth <- max s.depth n
+    let incr_writer_skip s = s.writer_skip <- s.writer_skip + 1
 
     external get_64: string -> int -> int64 = "%caml_string_get64u"
 
@@ -846,9 +864,6 @@ module Make
       let tbl = Tbl.create 10_123 in
       let stats = stats () in
       { tbl; stats; new_db; old_db = repo.db; switch }
-
-    let promote_val t k v =
-      Raw.add_cstruct t.new_db k v
 
     let is_node k =
       String.length k > 4
@@ -889,7 +904,7 @@ module Make
       >>= function
       | Some v ->
           if is_node k then Raw.add t.new_db k( upgrade_node t v)
-          else promote_val t k v
+          else Raw.add_cstruct t.new_db k v
       | None   ->
           let k = H.of_raw (Cstruct.of_string k) in
           Fmt.failwith "promote %s: cannot promote key %a\n%!" msg H.pp k
@@ -903,7 +918,7 @@ module Make
     and value = { key : H.t; derivation : string * Cstruct.t option;
                   status : status ; depth : int }
     and rd_queue = value Queue.t
-    and wr_queue = action Queue.t
+    and wr_queue = action -> unit Lwt.t
     and context =
       { rd : rd_queue
       ; wr : wr_queue
@@ -920,15 +935,16 @@ module Make
         incr_nodes t.gc.stats ;
         update_width t.gc.stats children ;
         update_depth t.gc.stats value.depth ;
-        List.iter (fun (_, c) -> match c with
+        Lwt_list.iter_s (fun (_, c) -> match c with
             | `Contents (k, _) ->
                 let k' = P.XContents.of_key k in
-                Queue.push (Promote_and_continue_with (k', Some buf)) t.wr
+                t.wr (Promote_and_continue_with (k', Some buf))
             | `Node k ->
                 let k' = P.XNode.of_key k in
-                Queue.push { key=k; derivation= (k', Some buf); status= Do_scan; depth= value.depth + 1 } t.rd
+                Queue.push { key=k; derivation= (k', Some buf); status= Do_scan; depth= value.depth + 1 } t.rd;
+                Lwt.return_unit
           )
-          children;
+          children >>= fun () ->
         Queue.push { value with status= Do_promotion } t.rd ;
         Lwt.return ()
       )
@@ -937,43 +953,45 @@ module Make
       match Queue.pop context.rd with
       | exception Queue.Empty -> Lwt.return ()
       | { status = Do_promotion; derivation = k, buf; _ } ->
-        Queue.push (Promote_and_continue_with (k, buf)) context.wr;
+        context.wr (Promote_and_continue_with (k, buf)) >>= fun () ->
         dispatcher context
       | value -> (
           scan context value >>= fun () ->
           dispatcher context
         )
 
-    let rec writer context =
-      match Queue.pop context.wr with
-      | exception Queue.Empty -> Lwt.return ()
-      | Promote_and_continue_with (k', buf) ->
-          if mem context.gc k' then writer context
-          else (
-            incr_contents context.gc.stats;
-            promote "whatever" context.gc k' ?old:buf >>= fun () ->
-            writer context
-          )
+    let rec writer gc mvar =
+      print_message gc;
+      Lwt_mvar.take mvar >>= fun (Promote_and_continue_with (k', buf)) ->
+        if mem gc k' then (
+          incr_writer_skip gc.stats;
+          writer gc mvar
+        )
+        else (
+          incr_contents gc.stats;
+          promote "whatever" gc k' ?old:buf >>= fun () ->
+          writer gc mvar
+        )
 
     let pass gc roots =
-      print_message gc;
       (* Printf.printf "Pass (%d roots)\n%!" (List.length roots); *)
       let make_context_from roots =
         let rd_queue = Queue.create () in
-        let wr_queue = Queue.create () in
+        let wr_mvar = Lwt_mvar.create_empty () in
 
         let rec go = function
           | [] -> ()
           | (k, k') :: roots ->
               Queue.add { key= k; derivation= k'; status= Do_scan; depth= 0 } rd_queue ;
               go roots in
-        go roots; { rd= rd_queue
-                  ; wr= wr_queue
-                  ; gc } in
-      let context = make_context_from roots in
-      dispatcher context >>= fun () ->
-      Printf.printf "end of dispatch, %d elements in write queue\n%!" (Queue.length context.wr);
-      writer context
+        go roots;
+        { rd= rd_queue
+        ; wr= (fun action -> Lwt_mvar.put wr_mvar action)
+        ; gc },
+        wr_mvar
+      in
+      let context, wr_mvar = make_context_from roots in
+      Lwt.join [ dispatcher context; writer gc wr_mvar ]
 
     let copy_root gc k =
       let k' = P.XNode.of_key k in
