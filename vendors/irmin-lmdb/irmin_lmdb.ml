@@ -159,7 +159,7 @@ let close t =
 type ('r) reader =
   { f : 'k. 'k Lmdb.txn -> Lmdb.db -> ('r, Lmdb.error) result } [@@unboxed]
 
-let with_read_db db ~f =
+let[@landmark] with_read_db db ~f =
   match db.wtxn with
   | None ->
       Lmdb.with_ro_db db.db ~f:f.f
@@ -167,7 +167,7 @@ let with_read_db db ~f =
       f.f txn ddb
 
 let get txn db k =
-  Result.map ~f:Cstruct.of_bigarray (Lmdb.get txn db k)
+  Result.map ~f:Cstruct.of_bigarray (Lmdb.get txn db k)[@landmark "Lmdb.get"]
 
 let find_bind db k ~f =
   match
@@ -180,11 +180,11 @@ let find_bind db k ~f =
 module Raw = struct
 
   let mem db k =
-    with_read_db db ~f:{ f = fun txn db -> Lmdb.mem txn db k }
+    with_read_db db ~f:{ f = fun txn db -> (Lmdb.mem txn db k)[@landmark "Lmdb.mem"] }
     |> of_result "mem"
 
   let find db key of_ba =
-    find_bind db key ~f:(fun v -> Option.of_result (of_ba v))
+    find_bind db key ~f:(fun v -> Option.of_result (of_ba v[@landmark "of_ba"]))
     |> of_result "find"
 
   let add_string db k v =
@@ -240,12 +240,12 @@ module AO (K: Irmin.Hash.S) (V: Irmin.Contents.S0) (Conv: sig
 
   let find db key =
     Raw.find db (Conv.of_key key) @@ fun v ->
-    Conv.to_value v
+    (Conv.to_value v)[@landmark "Conv.to_value"]
 
   let find_v db key =
     Raw.find db (Conv.of_key key) @@ fun v ->
-    Conv.to_value v |>> fun x ->
-    Ok (v, x)
+    (Conv.to_value v |>> fun x ->
+    Ok (v, x))[@landmark "Conv.to_value"]
 
   let add db v =
     let k = Conv.digest v in
@@ -909,7 +909,7 @@ module Make
       ; wr : wr_queue
       ; gc : t }
 
-    let scan t value =
+    let[@landmark] scan t value =
       let k' = P.XNode.of_key value.key in
       if mem t.gc k' then Lwt.return ()
       else (
@@ -944,7 +944,7 @@ module Make
           dispatcher context
         )
 
-    let rec writer context =
+    let[@landmark] rec writer context =
       match Queue.pop context.wr with
       | exception Queue.Empty -> Lwt.return ()
       | Promote_and_continue_with (k', buf) ->
@@ -955,7 +955,7 @@ module Make
             writer context
           )
 
-    let pass gc roots =
+    let[@landmark] pass gc roots =
       print_message gc;
       (* Printf.printf "Pass (%d roots)\n%!" (List.length roots); *)
       let make_context_from roots =
@@ -972,7 +972,7 @@ module Make
                   ; gc } in
       let context = make_context_from roots in
       dispatcher context >>= fun () ->
-      Printf.printf "end of dispatch, %d elements in write queue\n%!" (Queue.length context.wr);
+      (* Printf.printf "end of dispatch, %d elements in write queue\n%!" (Queue.length context.wr); *)
       writer context
 
     let copy_root gc k =
@@ -984,7 +984,7 @@ module Make
         promote "root" gc k'
       )
 
-    let copy_commit gc k =
+    let[@landmark] copy_commit gc k =
       (* Printf.printf "XXX copy_commit\n%!"; *)
       Lwt_switch.check gc.switch;
       P.XCommit.find_v gc.old_db k >|= Option.get >>= fun (buf, v) ->
@@ -1032,7 +1032,7 @@ module Make
 
   end
 
-  let promote_all ~(repo:repo) ?before_pivot ~branches t roots =
+  let[@landmark] promote_all ~(repo:repo) ?before_pivot ~branches t roots =
     Lwt_list.iteri_s (fun i k ->
         Irmin_GC.copy_commit t k >>= fun () ->
         (* flush to disk regularly to not hold too much data into RAM *)

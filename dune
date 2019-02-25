@@ -1,4 +1,6 @@
 (env
+ (prof
+  (ocamlopt_flags (:standard -g -p)))
  (dev
   (flags (:standard)))
  (release

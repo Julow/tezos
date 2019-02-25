@@ -1,5 +1,6 @@
 (library
  (name        irmin_lmdb)
  (public_name irmin-lmdb)
- (libraries   irmin lmdb lwt.unix ocplib-endian)
+ (libraries   irmin lmdb lwt.unix stdio ocplib-endian landmarks)
+ (preprocess (pps landmarks.ppx))
  (flags (:standard -safe-string)))
