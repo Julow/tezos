@@ -208,7 +208,7 @@ module Raw = struct
      | x -> x)
     |> of_result "remove"
 
-  let commit op db =
+  let[@landmark] commit op db =
     (match db.wtxn with
      | None -> Ok ()
      | Some (t, _ddb) ->
@@ -782,16 +782,14 @@ module Make
     mutable promoted_commits: int;
     mutable upgraded_nodes : int;
     mutable width: int;
-    mutable depth: int;
   }
 
   let pp_stats ppf t =
-    Fmt.pf ppf "[%d blobs/%d nodes (%d upgrades)/%d commits] depth:%d width:%d"
+    Fmt.pf ppf "[%d blobs/%d nodes (%d upgrades)/%d commits] width:%d"
       t.promoted_contents
       t.promoted_nodes
       t.upgraded_nodes
       t.promoted_commits
-      t.depth
       t.width
 
   let stats () = {
@@ -800,7 +798,6 @@ module Make
     promoted_commits = 0;
     upgraded_nodes = 0;
     width = 0;
-    depth = 0;
   }
 
   (* poor-man GC *)
@@ -902,10 +899,10 @@ module Make
       { wr : wr_queue
       ; gc : t }
 
-    let find_v db key =
+    let[@landmark] find_v db key =
       Lwt_main.run (P.XNode.find_v db key)
 
-    let[@landmark] rec scan t key deriv =
+    let[@landmark] rec scan t key =
       let k' = P.XNode.of_key key in
       if mem t.gc k' then ()
       else (
@@ -920,34 +917,24 @@ module Make
                 let k' = P.XContents.of_key k in
                 Queue.push (Promote_and_continue_with (k', Some buf)) t.wr
             | `Node k ->
-                scan t k (Promote_and_continue_with (P.XNode.of_key k, Some buf))
+                scan t k
           )
-          children;
-        Queue.push deriv t.wr
+          children
       )
-
-    let[@landmark] rec scan_roots t = function
-      | [] -> ()
-      | (key, (deriv_key, deriv_buf)) :: tl ->
-        scan t key (Promote_and_continue_with (deriv_key, deriv_buf));
-        scan_roots t tl
 
     let[@landmark] rec writer context =
       match Queue.pop context.wr with
       | exception Queue.Empty -> Lwt.return ()
       | Promote_and_continue_with (k', buf) ->
-          if mem context.gc k' then writer context
-          else (
-            incr_contents context.gc.stats;
-            promote "whatever" context.gc k' ?old:buf >>= fun () ->
-            writer context
-          )
+          incr_contents context.gc.stats;
+          promote "whatever" context.gc k' ?old:buf >>= fun () ->
+          writer context
 
     let[@landmark] pass gc roots =
       print_message gc;
       (* Printf.printf "Pass (%d roots)\n%!" (List.length roots); *)
       let context = { wr= Queue.create (); gc } in
-      scan_roots context roots;
+      List.iter (fun r -> scan context r) roots;
       (* Printf.printf "end of dispatch, %d elements in write queue\n%!" (Queue.length context.wr); *)
       writer context
 
@@ -955,7 +942,7 @@ module Make
       let k' = P.XNode.of_key k in
       if mem gc k' then Lwt.return ()
       else (
-        pass gc [ k, (k', None) ] >>= fun () ->
+        pass gc [ k ] >>= fun () ->
         (* Printf.printf "Promoting root...\n%!"; *)
         promote "root" gc k'
       )
@@ -976,7 +963,7 @@ module Make
       | None   -> "context"
       | Some r -> r
 
-    let pivot ~branches repo t =
+    let[@landmark] pivot ~branches repo t =
       let rename () =
         let old_data = Filename.concat (root repo) "data.mdb" in
         let new_data = Filename.concat (new_root repo) "data.mdb" in
