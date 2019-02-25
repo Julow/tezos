@@ -811,7 +811,6 @@ module Make
     let incr_upgraded_nodes s = s.upgraded_nodes <- s.upgraded_nodes + 1
     let incr_commits s = s.promoted_commits <- s.promoted_commits + 1
     let update_width s c = s.width <- max s.width (List.length c)
-    let update_depth s n = s.depth <- max s.depth n
 
     external get_64: string -> int -> int64 = "%caml_string_get64u"
 
@@ -896,53 +895,42 @@ module Make
 
     let mem t k = Tbl.mem t.tbl k
 
-    type status =
-      | Do_scan (* `Gray *) | Do_promotion (* `Black *)
     type action =
       | Promote_and_continue_with of string * Cstruct.t option
-    and value = { key : H.t; derivation : string * Cstruct.t option;
-                  status : status ; depth : int }
-    and rd_queue = value Queue.t
     and wr_queue = action Queue.t
     and context =
-      { rd : rd_queue
-      ; wr : wr_queue
+      { wr : wr_queue
       ; gc : t }
 
-    let[@landmark] scan t value =
-      let k' = P.XNode.of_key value.key in
-      if mem t.gc k' then Lwt.return ()
+    let find_v db key =
+      Lwt_main.run (P.XNode.find_v db key)
+
+    let[@landmark] rec scan t key deriv =
+      let k' = P.XNode.of_key key in
+      if mem t.gc k' then ()
       else (
         Tbl.add t.gc.tbl k' ;
-        P.XNode.find_v t.gc.old_db value.key >|= Option.get >>= fun (buf, v) ->
+        let buf, v = find_v t.gc.old_db key |> Option.get in
         let children = P.Node.Val.list v in
         (* Printf.printf "Scanning (%d children)\n%!" (List.length children); *)
         incr_nodes t.gc.stats ;
         update_width t.gc.stats children ;
-        update_depth t.gc.stats value.depth ;
         List.iter (fun (_, c) -> match c with
             | `Contents (k, _) ->
                 let k' = P.XContents.of_key k in
                 Queue.push (Promote_and_continue_with (k', Some buf)) t.wr
             | `Node k ->
-                let k' = P.XNode.of_key k in
-                Queue.push { key=k; derivation= (k', Some buf); status= Do_scan; depth= value.depth + 1 } t.rd
+                scan t k (Promote_and_continue_with (P.XNode.of_key k, Some buf))
           )
           children;
-        Queue.push { value with status= Do_promotion } t.rd ;
-        Lwt.return ()
+        Queue.push deriv t.wr
       )
 
-    let rec dispatcher context =
-      match Queue.pop context.rd with
-      | exception Queue.Empty -> Lwt.return ()
-      | { status = Do_promotion; derivation = k, buf; _ } ->
-        Queue.push (Promote_and_continue_with (k, buf)) context.wr;
-        dispatcher context
-      | value -> (
-          scan context value >>= fun () ->
-          dispatcher context
-        )
+    let[@landmark] rec scan_roots t = function
+      | [] -> ()
+      | (key, (deriv_key, deriv_buf)) :: tl ->
+        scan t key (Promote_and_continue_with (deriv_key, deriv_buf));
+        scan_roots t tl
 
     let[@landmark] rec writer context =
       match Queue.pop context.wr with
@@ -958,20 +946,8 @@ module Make
     let[@landmark] pass gc roots =
       print_message gc;
       (* Printf.printf "Pass (%d roots)\n%!" (List.length roots); *)
-      let make_context_from roots =
-        let rd_queue = Queue.create () in
-        let wr_queue = Queue.create () in
-
-        let rec go = function
-          | [] -> ()
-          | (k, k') :: roots ->
-              Queue.add { key= k; derivation= k'; status= Do_scan; depth= 0 } rd_queue ;
-              go roots in
-        go roots; { rd= rd_queue
-                  ; wr= wr_queue
-                  ; gc } in
-      let context = make_context_from roots in
-      dispatcher context >>= fun () ->
+      let context = { wr= Queue.create (); gc } in
+      scan_roots context roots;
       (* Printf.printf "end of dispatch, %d elements in write queue\n%!" (Queue.length context.wr); *)
       writer context
 
